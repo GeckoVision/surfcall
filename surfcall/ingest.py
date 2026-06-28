@@ -10,11 +10,12 @@ deps, so it can be lifted into the eventual product repo unchanged.
 
 from __future__ import annotations
 
-import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
 import yaml
+
+from .netguard import safe_get
 
 HTTP_METHODS = {"get", "post", "put", "delete", "patch", "head", "options"}
 _MAX_REF_DEPTH = 12  # bound recursion on self-referential schemas
@@ -50,8 +51,9 @@ def load_spec(src: str) -> dict[str, Any]:
     ``.json`` specs.
     """
     if src.startswith(("http://", "https://")):
-        with urllib.request.urlopen(src, timeout=30) as resp:  # noqa: S310 (trusted doc URL)
-            raw = resp.read().decode("utf-8")
+        # SSRF guard: validate + cap redirects/size/timeout before/while fetching an
+        # untrusted spec URL (never trust the bytes; never let it reach a private host).
+        raw = safe_get(src)
     else:
         with open(src, encoding="utf-8") as fh:
             raw = fh.read()

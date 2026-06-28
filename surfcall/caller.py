@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote, urlencode
 
+from .netguard import validate_public_url
+
 _UNFILLED = re.compile(r"\{([^}]+)\}")
 
 
@@ -83,6 +85,8 @@ def execute(req: PreparedRequest, timeout: int = 30) -> tuple[int, Any]:
     Used only in live mode; the demo/tests run in recorded mode and never hit
     the network.
     """
+    # SSRF guard before any live request: the base URL came from the spec (untrusted).
+    validate_public_url(req.url)
     data = None
     headers = dict(req.headers)
     if req.json_body is not None:

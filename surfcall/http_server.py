@@ -1,0 +1,177 @@
+"""HTTP transport — serve the EXISTING ``McpSurface`` over MCP Streamable HTTP.
+
+This is the thin distribution edge for M1: one public OpenAPI URL, comprehended by
+the unchanged engine, exposed at a single ``/mcp`` endpoint a real external agent
+(Claude Code / Cursor) can add. The comprehension layer is reused verbatim — this
+module only bridges ``McpSurface`` to the wire.
+
+Design notes:
+- The ``mcp`` SDK + ``starlette`` + ``uvicorn`` live behind the optional ``serve``
+  extra, so the import is guarded (mirrors ``mcp_server.serve_stdio``). The engine
+  stays dep-light.
+- We register tools on the *low-level* MCP ``Server`` rather than ``FastMCP`` so the
+  question-shaped ``inputSchema`` reaches the agent intact (first-call-correct);
+  FastMCP infers schemas from a Python signature, which would erase ours.
+- DNS-rebinding defense is on: the transport validates the ``Host``/``Origin``
+  headers against an explicit allowlist.
+- Control plane: a call's response flows back in the JSON-RPC reply but is NEVER
+  persisted or logged. We log only redacted correctness metadata (tool, status, ok).
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import TYPE_CHECKING, Any
+
+from .access import public_session
+from .client import AgentApiClient
+from .mcp_server import McpSurface
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from starlette.applications import Starlette
+
+logger = logging.getLogger("surfcall.http_server")
+
+DEFAULT_SERVER_NAME = "gecko"
+MCP_PATH = "/mcp"
+
+_INSTALL_HINT = (
+    "Install the serve extra to run the HTTP server: uv sync --extra serve "
+    "(or: uv pip install 'surfcall[serve]')"
+)
+
+
+def _surface_from(spec_or_client: Any, base_url: str | None, mode: str) -> McpSurface:
+    """Accept a spec (str/dict), an AgentApiClient, or an McpSurface; yield a surface.
+
+    A bare spec is wrapped with a ``public_session`` so auth-gated ops stay hidden —
+    M1 is public-only, and the agent must never be offered a tool it can't satisfy.
+    """
+    if isinstance(spec_or_client, McpSurface):
+        return spec_or_client
+    if isinstance(spec_or_client, AgentApiClient):
+        return McpSurface(spec_or_client, mode=mode)
+    client = AgentApiClient(spec_or_client, base_url=base_url, session=public_session())
+    return McpSurface(client, mode=mode)
+
+
+def _log_outcome(name: str, result: Any) -> None:
+    """Log ONLY redacted correctness metadata — never the payload (control plane).
+
+    Extracts the status code (correctness signal) and an ok flag; the response body
+    is deliberately untouched and unlogged.
+    """
+    status = result.get("status") if isinstance(result, dict) else None
+    ok = status is None or (isinstance(status, int) and 200 <= status < 400)
+    logger.info("call tool=%s status=%s ok=%s", name, status, ok)
+
+
+def build_http_app(
+    spec_or_client: Any,
+    *,
+    base_url: str | None = None,
+    mode: str = "recorded",
+    server_name: str = DEFAULT_SERVER_NAME,
+    allowed_hosts: list[str] | None = None,
+    allowed_origins: list[str] | None = None,
+) -> Starlette:
+    """Build the Streamable-HTTP ASGI app wrapping ``McpSurface`` (no server run).
+
+    Factored out of ``serve_http`` so tests can mount it in-process (offline) with an
+    ASGI transport. ``allowed_hosts``/``allowed_origins`` drive DNS-rebinding defense.
+    """
+    try:
+        import mcp.types as mcp_types
+        from mcp.server.fastmcp.server import StreamableHTTPASGIApp
+        from mcp.server.lowlevel import Server
+        from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+        from mcp.server.transport_security import TransportSecuritySettings
+        from starlette.applications import Starlette
+        from starlette.routing import Route
+    except ImportError as exc:  # pragma: no cover - exercised only without the extra
+        raise SystemExit(_INSTALL_HINT) from exc
+
+    surface = _surface_from(spec_or_client, base_url, mode)
+    tools = surface.list_tools()
+
+    server: Any = Server(server_name)
+
+    @server.list_tools()
+    async def _list_tools() -> list[Any]:
+        return [
+            mcp_types.Tool(
+                name=t["name"],
+                description=t["description"],
+                inputSchema=t["inputSchema"],
+            )
+            for t in tools
+        ]
+
+    @server.call_tool()
+    async def _call_tool(name: str, arguments: dict[str, Any]) -> list[Any]:
+        result = surface.call_tool(name, arguments or {})
+        _log_outcome(name, result)
+        # Return as unstructured JSON text; never cache/persist the body.
+        return [
+            mcp_types.TextContent(type="text", text=json.dumps(result, default=str))
+        ]
+
+    security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=allowed_hosts or [],
+        allowed_origins=allowed_origins or [],
+    )
+    manager = StreamableHTTPSessionManager(app=server, security_settings=security)
+    asgi_app = StreamableHTTPASGIApp(manager)
+
+    return Starlette(
+        routes=[Route(MCP_PATH, endpoint=asgi_app)],
+        lifespan=lambda _app: manager.run(),
+    )
+
+
+def security_allowlist(
+    host: str,
+    port: int,
+    extra_hosts: list[str] | None = None,
+    extra_origins: list[str] | None = None,
+) -> tuple[list[str], list[str]]:
+    """Compute the Host/Origin allowlists for the bind address + any tunnel hostnames.
+
+    A public HTTPS tunnel (cloudflared/ngrok) presents its own ``Host``; the founder
+    adds it via ``extra_hosts``/``extra_origins`` so the rebinding guard still passes.
+    """
+    hosts = {f"127.0.0.1:{port}", f"localhost:{port}", f"{host}:{port}"}
+    hosts.update(extra_hosts or [])
+    origins: set[str] = set(extra_origins or [])
+    for h in hosts:
+        origins.add(f"http://{h}")
+        origins.add(f"https://{h}")
+    return sorted(hosts), sorted(origins)
+
+
+def serve_http(
+    spec_or_client: Any,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    mode: str = "recorded",
+    *,
+    base_url: str | None = None,
+    server_name: str = DEFAULT_SERVER_NAME,
+    allowed_hosts: list[str] | None = None,
+    allowed_origins: list[str] | None = None,
+) -> None:  # pragma: no cover - exercised by the founder-run live smoke
+    """Serve the surface over Streamable HTTP via uvicorn. Blocks until stopped."""
+    import uvicorn
+
+    hosts, origins = security_allowlist(host, port, allowed_hosts, allowed_origins)
+    app = build_http_app(
+        spec_or_client,
+        base_url=base_url,
+        mode=mode,
+        server_name=server_name,
+        allowed_hosts=hosts,
+        allowed_origins=origins,
+    )
+    uvicorn.run(app, host=host, port=port)

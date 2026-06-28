@@ -1,0 +1,148 @@
+"""``python -m surfcall.serve <openapi-url>`` — paste an API, serve it to agents.
+
+The whole M1 distribution flow as a CLI: SSRF-validate the spec URL, comprehend it
+with the unchanged engine, print the MCP URL + one-click add strings for each host
+app, then serve the surface over Streamable HTTP.
+
+Thin by design — every line of real logic lives in the package (netguard, ingest,
+client, http_server, deeplinks). This module only parses args and formats output.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+
+from .access import public_session
+from .client import AgentApiClient
+from .deeplinks import all_add_strings
+from .http_server import MCP_PATH, serve_http
+from .netguard import UnsafeUrlError, validate_public_url
+
+
+def _slugify(text: str, fallback: str = "gecko") -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return slug[:48] or fallback
+
+
+def _summary(client: AgentApiClient) -> str:
+    total = len(client.operations)
+    usable = len(client.list_tools())
+    hidden = len(client.tools) - usable
+    return (
+        f"comprehended {total} operations -> {usable} usable as tools "
+        f"({hidden} auth-gated hidden from the agent)"
+    )
+
+
+def _mcp_url(host: str, port: int, public_url: str | None) -> str:
+    if public_url:
+        base = public_url.rstrip("/")
+        return base if base.endswith(MCP_PATH) else base + MCP_PATH
+    return f"http://{host}:{port}{MCP_PATH}"
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        prog="python -m surfcall.serve",
+        description="Comprehend a public OpenAPI URL and serve it to agents over MCP.",
+    )
+    p.add_argument("spec", help="Public OpenAPI 3.x URL (or local path for dev).")
+    p.add_argument("--host", default="127.0.0.1", help="Bind host (default 127.0.0.1).")
+    p.add_argument("--port", type=int, default=8000, help="Bind port (default 8000).")
+    p.add_argument(
+        "--mode",
+        choices=("recorded", "live"),
+        default="recorded",
+        help="recorded ($0, synthesized) or live (real upstream calls).",
+    )
+    p.add_argument(
+        "--name", default=None, help="Server/tool name (default: spec slug)."
+    )
+    p.add_argument(
+        "--public-url",
+        default=None,
+        help="Public HTTPS URL the agent will connect to (e.g. a tunnel). "
+        "Advertised in the add strings and trusted for Host/Origin.",
+    )
+    p.add_argument(
+        "--allow-host",
+        action="append",
+        default=[],
+        help="Extra Host header to allow (repeatable; for a tunnel hostname).",
+    )
+    p.add_argument(
+        "--allow-origin",
+        action="append",
+        default=[],
+        help="Extra Origin to allow (repeatable).",
+    )
+    return p.parse_args(argv)
+
+
+def _print_banner(name: str, mcp_url: str, summary: str) -> None:
+    print("Gecko — make any API agent-usable (surfcall engine)\n" + "=" * 56)
+    print(summary)
+    print("Control plane: Gecko stores only the API surface — never your data,")
+    print("never response payloads, never secrets.\n")
+    print(f"MCP URL (Streamable HTTP):  {mcp_url}\n")
+    print("Add it to an agent (one step):")
+    adds = all_add_strings(name, mcp_url)
+    print(f"  Claude Code:  {adds['claude']}")
+    print(f"  Cursor:       {adds['cursor']}")
+    print(f"  VS Code:      {adds['vscode']}\n")
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+
+    # Early, friendly SSRF check for URL specs (ingest re-validates while fetching).
+    if args.spec.startswith(("http://", "https://")):
+        try:
+            validate_public_url(args.spec)
+        except UnsafeUrlError as exc:
+            print(f"Refusing to ingest unsafe URL: {exc}", file=sys.stderr)
+            return 2
+
+    try:
+        client = AgentApiClient(args.spec, session=public_session())
+    except (UnsafeUrlError, ValueError) as exc:
+        print(f"Could not comprehend spec: {exc}", file=sys.stderr)
+        return 2
+
+    title = str((client.spec.get("info") or {}).get("title", ""))
+    name = args.name or _slugify(title)
+    mcp_url = _mcp_url(args.host, args.port, args.public_url)
+
+    extra_hosts: list[str] = list(args.allow_host)
+    extra_origins: list[str] = list(args.allow_origin)
+    if args.public_url:
+        # Trust the advertised public URL's host/origin (tunnel/DNS-rebinding guard).
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(args.public_url)
+        if parts.netloc:
+            extra_hosts.append(parts.netloc)
+            extra_origins.append(f"{parts.scheme}://{parts.netloc}")
+
+    _print_banner(name, mcp_url, _summary(client))
+
+    serve_http(
+        client,
+        host=args.host,
+        port=args.port,
+        mode=args.mode,
+        server_name=name,
+        allowed_hosts=extra_hosts or None,
+        allowed_origins=extra_origins or None,
+    )
+    return 0
+
+
+def _run() -> None:
+    raise SystemExit(main())
+
+
+if __name__ == "__main__":
+    _run()
