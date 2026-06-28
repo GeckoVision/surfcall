@@ -13,7 +13,9 @@ from typing import Any
 from .client import AgentApiClient
 from .sample import example_from_schema
 
-DEFAULT_SPEC = str(Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "txodds_docs.yaml")
+DEFAULT_SPEC = str(
+    Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "txodds_docs.yaml"
+)
 
 GOALS = [
     "get the latest live odds for a football fixture",
@@ -26,10 +28,17 @@ def _fill_required(tool: dict[str, Any]) -> dict[str, Any]:
     schema = tool.get("inputSchema", {}) or {}
     props = schema.get("properties", {}) or {}
     required = set(schema.get("required", []) or [])
-    return {name: example_from_schema(props[name]) for name in props if name in required}
+    return {
+        name: example_from_schema(props[name]) for name in props if name in required
+    }
 
 
-def run(spec: str = DEFAULT_SPEC, goals: list[str] = GOALS, mode: str = "recorded", session=None) -> list[dict[str, Any]]:
+def run(
+    spec: str = DEFAULT_SPEC,
+    goals: list[str] = GOALS,
+    mode: str = "recorded",
+    session=None,
+) -> list[dict[str, Any]]:
     client = AgentApiClient(spec, session=session)
     steps: list[dict[str, Any]] = []
     for goal in goals:
@@ -72,40 +81,56 @@ def live_demo() -> None:
     print("surfcall — LIVE mode (real TxODDS World Cup data)\n" + "=" * 56)
 
     def tool_for(path: str) -> str:
-        return next(t["name"] for t in client.list_tools() if t["_invoke"]["path"] == path)
+        return next(
+            t["name"] for t in client.list_tools() if t["_invoke"]["path"] == path
+        )
 
     fixtures = client.call(tool_for("/api/fixtures/snapshot"), {}, mode="live")
     rows = fixtures["data"] if isinstance(fixtures["data"], list) else []
     first = rows[0] if rows else {}
     print("\nGOAL: what World Cup matches are coming up?")
-    print(f"  CALLED: {fixtures['method']} {fixtures['request']}  (HTTP {fixtures['status']})")
+    print(
+        f"  CALLED: {fixtures['method']} {fixtures['request']}  (HTTP {fixtures['status']})"
+    )
     if first:
-        print(f"  → {first.get('Participant1')} vs {first.get('Participant2')}  (FixtureId {first.get('FixtureId')})")
+        print(
+            f"  → {first.get('Participant1')} vs {first.get('Participant2')}  (FixtureId {first.get('FixtureId')})"
+        )
 
     chosen = None
     for row in rows[:10]:
         f = row.get("FixtureId")
         if f is None:
             continue
-        odds = client.call(tool_for("/api/odds/snapshot/{fixtureId}"), {"fixtureId": f}, mode="live")
+        odds = client.call(
+            tool_for("/api/odds/snapshot/{fixtureId}"), {"fixtureId": f}, mode="live"
+        )
         if isinstance(odds["data"], list) and odds["data"]:
             chosen = (row, odds)
             break
     if chosen:
         row, odds = chosen
-        print(f"\nGOAL: get live odds for a match with an open market")
-        print(f"  → {row.get('Participant1')} vs {row.get('Participant2')}  (FixtureId {row.get('FixtureId')})")
+        print("\nGOAL: get live odds for a match with an open market")
+        print(
+            f"  → {row.get('Participant1')} vs {row.get('Participant2')}  (FixtureId {row.get('FixtureId')})"
+        )
         print(f"  CALLED: {odds['method']} {odds['request']}  (HTTP {odds['status']})")
         print(f"  LIVE ODDS: {json.dumps(odds['data'])[:380]}")
     elif first.get("FixtureId") is not None:
-        print(f"\nGOAL: live odds for {first.get('Participant1')} vs {first.get('Participant2')}")
-        print("  scanned 10 fixtures — all HTTP 200 but no open market yet (odds populate near kickoff).")
+        print(
+            f"\nGOAL: live odds for {first.get('Participant1')} vs {first.get('Participant2')}"
+        )
+        print(
+            "  scanned 10 fixtures — all HTTP 200 but no open market yet (odds populate near kickoff)."
+        )
 
 
 def main() -> None:
     import os
 
-    if os.environ.get("TXODDS_API_TOKEN") or os.path.exists(os.path.expanduser("~/.gecko/txodds-session.json")):
+    if os.environ.get("TXODDS_API_TOKEN") or os.path.exists(
+        os.path.expanduser("~/.gecko/txodds-session.json")
+    ):
         live_demo()
         return
     print("surfcall — make any API agent-usable (recorded mode, $0)\n" + "=" * 56)

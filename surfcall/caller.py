@@ -88,7 +88,9 @@ def execute(req: PreparedRequest, timeout: int = 30) -> tuple[int, Any]:
     if req.json_body is not None:
         data = json.dumps(req.json_body).encode("utf-8")
         headers.setdefault("Content-Type", "application/json")
-    request = urllib.request.Request(req.url, data=data, headers=headers, method=req.method)
+    request = urllib.request.Request(
+        req.url, data=data, headers=headers, method=req.method
+    )
     with urllib.request.urlopen(request, timeout=timeout) as resp:  # noqa: S310
         body = resp.read().decode("utf-8")
         try:

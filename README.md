@@ -1,32 +1,213 @@
-# surfcall (working name)
+# surfcall — make any API agent-usable without integration code
 
-**Make any API agent-usable without integration code.**
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776AB.svg)](https://www.python.org/)
+[![uv](https://img.shields.io/badge/uv-managed-DE5FE9.svg)](https://docs.astral.sh/uv/)
+[![Claude Code](https://img.shields.io/badge/surface-MCP-D97757.svg)](https://modelcontextprotocol.io/)
+[![x402](https://img.shields.io/badge/x402-stub%20%7C%20live-9945FF.svg)](https://x402.org/)
+[![status](https://img.shields.io/badge/V1-live%20on%20one%20API-orange.svg)](#-status-honest)
 
-Point an agent at an API — even one behind human-shaped docs and a paywall — and it can find the right call, make it correctly the first time, and run. Today a builder reads the docs, writes a client, and still can't tell if the agent is calling it right. This removes that step.
+> **surfcall is the comprehension layer for the agentic economy.** Point an agent at
+> an API — even one behind human-shaped docs and a paywall — and it finds the right
+> call, makes it correctly the first time, and runs. No client to write, no guessing
+> whether the agent is calling it right.
+>
+> *Docs and endpoints are built for humans. surfcall translates them for agents.*
 
-## V1 scope — the comprehension layer (one API: TxODDS)
-1. **Ingest** the API's *surface* (OpenAPI/docs) — endpoints, params, schemas. Never the response data.
-2. **Comprehend** — turn it into question-shaped, first-call-correct agent tools.
-3. **Catalog** — a structured capability list (intent → endpoint). No vectors at this scale.
-4. **Access** — drive the on-chain subscription handshake; the agent then calls the API *directly* for data.
-5. **Expose** — as an MCP server / agent-skill.
-6. **Validate** — replay calls, confirm first-call-correct, log outcomes (seeds the moat).
+Today a builder reads the docs, hand-writes a client, and **still can't tell if the
+agent is calling the API correctly.** surfcall removes that step: it ingests an API's
+*surface* (OpenAPI/docs), turns it into question-shaped, first-call-correct agent
+tools, drives the access/auth handshake, and lets the agent call the **real API
+directly** for data.
 
-**Data governance:** we store the API surface + generated tool defs + correctness metadata. We never store responses, user data, or secrets.
+### Where surfcall sits — three verbs, three layers
 
-**Not vectorized in V1** (deferred to multi-API V2). **Not** a payment rail (that's x402/Metera) or a marketplace (frames.ag) — this is the *comprehension* layer.
+| Layer | What it does | Who |
+|---|---|---|
+| APIs get **PAID** | billing / settlement rail | Metera (gate402), MCPay |
+| skills get **DISTRIBUTED** | marketplace / discovery | frames.ag, Bazaar |
+| **APIs get USED** | **comprehension / consumption** | **surfcall** |
 
-## What's built (V1, against the real TxODDS spec)
-`ingest` · `catalog` (find) · `tools` (comprehend, auth hidden) · `caller` (correct request) · `access` (two-token session) · `sample` (recorded responses) · `client` (recorded/live) · `mcp_server` (agent surface) · `validator` (correctness + flywheel log) · `demo`. **31 tests passing.**
+surfcall **composes on top of** x402 / MCP / pay.sh — it *consumes* a payment catalog
+as input. It is **not** a payment rail and **not** a marketplace. It is the layer that
+makes an API actually *usable* by an agent.
 
-## Dev
-```bash
-uv sync
-uv run pytest                      # 31 passing
-uv run python -m surfcall.demo     # E2E: goal -> discover -> correct call -> data ($0, recorded)
+---
+
+## ⚠️ Status (honest)
+
+V1 is **live on mainnet, end-to-end, against the real TxODDS World Cup API**: ingest →
+comprehend → catalog → access (a two-token on-chain subscribe) → first-call-correct →
+real data. A **$0 recorded mode** runs the entire path offline with no subscription.
+**31 tests pass.**
+
+What is **not** proven: **consumer willingness-to-pay** — the actual decider for the
+business. That is discovery-interview work, not a demo claim. So: never read this repo
+as *"surfcall is a proven business."* What is real today is a **working comprehension
+path on one genuinely painful API**, and a clean, API-agnostic engine behind it.
+
+---
+
+## Architecture
+
+surfcall is a **control plane**, not a data plane. It holds the API's *surface*, the
+generated tool defs, and *correctness metadata* — it **never** stores response
+payloads, user data, or secrets. That invariant is what lets it ingest any API
+unilaterally.
+
+```mermaid
+flowchart TD
+    A["AI agent<br/>(has a goal, no API docs)"] -->|"what can this API do for X?"| S
+
+    subgraph SC["surfcall — comprehension layer (control plane)"]
+        direction TB
+        ING[("ingest<br/>OpenAPI / docs — the *surface* only")]
+        CAT["catalog<br/>intent → endpoint"]
+        TOOL["tools<br/>question-shaped, first-call-correct<br/>(auth hidden)"]
+        ACC["access<br/>subscribe / session handshake"]
+        ING --> CAT --> TOOL
+        TOOL --> ACC
+    end
+
+    S --> TOOL
+    ACC -->|"injects auth"| CALL
+    A -->|"calls the real API directly"| CALL["the real API<br/>(data plane — surfcall never stores it)"]
+    CALL -->|"data"| A
 ```
 
-## Going live
-Recorded mode needs no subscription. For live World Cup data, do the one-time on-chain subscribe — see [scripts/SUBSCRIBE.md](scripts/SUBSCRIBE.md) — then pass a real `Session` to `AgentApiClient(..., session=...)` and call with `mode="live"`. Same code path.
+1. **Ingest** the API surface (OpenAPI 3.x) → normalized operations + params (`$ref`
+   resolved, cycle/depth guarded). Never the response data.
+2. **Catalog** — a structured capability list (intent → endpoint). Lexical at this
+   scale; no vectors.
+3. **Comprehend** — each operation becomes a question-shaped tool def an agent picks
+   correctly with no API docs. Auth headers are hidden.
+4. **Access** — drive the access/subscription handshake; the seam is one function,
+   `Session.auth_headers()`.
+5. **Call** — the agent calls the real API directly; surfcall injects credentials and
+   stays out of the data path.
+6. **Validate** — replay calls, confirm first-call-correct, log outcomes (JSONL). That
+   log is the seed of the V2 **correctness corpus** — the compounding moat.
 
-> Fresh repo, zero dependency on the old Builder-Bootstrap product. Rename + `git init` on brand pick.
+---
+
+## What you get
+
+| Surface | Entry point | Status |
+|---|---|---|
+| **$0 recorded demo** (goal → discover → correct call → data, offline) | `python -m surfcall.demo` | runnable now |
+| **Live demo** against real TxODDS World Cup data | `surfcall.demo:live_demo` (after subscribe) | mainnet-proven |
+| **Agent surface** (list/search capabilities, call a tool) | `surfcall.mcp_server:McpSurface` | shipped |
+| **Programmatic client** (`search / list_tools / prepare / call`) | `surfcall.client:AgentApiClient` | shipped |
+| **Correctness harness** (first-call-correct + flywheel log) | `surfcall.validator` | shipped |
+
+---
+
+## Quickstart ($0, no keys, no subscription)
+
+```bash
+git clone <surfcall repo>
+cd surfcall && uv sync
+uv run pytest                       # 31 passing
+uv run python -m surfcall.demo      # E2E: goal → discover → correct call → data (recorded, $0)
+```
+
+The recorded demo runs the **same code path** as live — it just synthesizes responses
+from the schema instead of hitting the network. That's the point: you can falsify the
+comprehension offline before spending a cent.
+
+---
+
+## Going live (real World Cup data)
+
+Recorded mode needs no subscription. For live data, do the one-time on-chain subscribe
+— see [`scripts/SUBSCRIBE.md`](scripts/SUBSCRIBE.md) — then pass a real `Session`:
+
+```python
+from surfcall.client import AgentApiClient
+client = AgentApiClient(spec, base_url="https://...", session=my_session)
+client.call(tool, args, mode="live")   # same path as recorded
+```
+
+> **Mainnet boundary:** the subscribe transaction is **founder-run only**. The tooling
+> *simulates* (no spend) and hands over the exact command; a human broadcasts.
+
+---
+
+## What's in this repo
+
+| Path | Purpose |
+|---|---|
+| `surfcall/ingest.py` | OpenAPI 3.x → normalized `Operation`/`Param` (`$ref` resolution, guarded) |
+| `surfcall/catalog.py` | Lexical capability search (intent → endpoint) |
+| `surfcall/tools.py` | `Operation` → question-shaped agent tool defs (**auth hidden**) |
+| `surfcall/caller.py` | tool + args → correct `PreparedRequest` (stdlib `urllib`) |
+| `surfcall/access.py` | `Session.auth_headers()` — the engine/adapter seam; two-token session |
+| `surfcall/sample.py` | deterministic schema → example (powers $0 recorded mode) |
+| `surfcall/client.py` | `AgentApiClient` — `search / list_tools / prepare / call` |
+| `surfcall/mcp_server.py` | `McpSurface` — the agent-facing MCP surface |
+| `surfcall/validator.py` | replay + first-call-correct + JSONL outcome log (moat seed) |
+| `surfcall/demo.py` | `run()` (recorded) + `live_demo()` |
+| `scripts/subscribe.py` | one-time on-chain subscribe (solders); simulate by default |
+| `docs/` · `private/` | strategy & PRD · gitignored business docs (canvas, pitch, numbers) |
+
+**Rule:** the comprehension logic is the product and lives in `surfcall/`. The MCP
+server, the client, and scripts are thin transport.
+
+---
+
+## Stack
+
+| Layer | Tool |
+|---|---|
+| Language | Python 3.11+, managed with `uv` |
+| Engine | stdlib-first (`urllib`); minimal deps; `pyyaml` for spec loading |
+| Agent surface | `mcp` (Model Context Protocol) |
+| Access / payments | x402; on-chain subscribe via `solders`; modes `stub` / `live` |
+| Quality | `ruff` · `mypy` · `pytest` (31 tests) |
+
+---
+
+## Environment variables
+
+**Source of truth:** [`.env.example`](.env.example).
+
+| Variable | Required | Default | Notes |
+|---|---|---|---|
+| `X402_MODE` | no | `stub` | `stub` / `live`. **Stub is intentional during user-testing — do not flip to live without founder go-ahead.** |
+| `TXODDS_*` / session file | for live only | — | live World Cup access after the on-chain subscribe (see `scripts/SUBSCRIBE.md`) |
+
+Recorded mode and the test suite need **no** keys.
+
+---
+
+## Development
+
+```bash
+uv run ruff format && uv run ruff check --fix
+uv run mypy surfcall
+uv run pytest                       # targeted invocations preferred
+uv run python -m surfcall.demo      # $0 recorded smoke
+```
+
+See [`CLAUDE.md`](CLAUDE.md) for the architecture invariants, the subagent team, and
+conventions.
+
+---
+
+## Team
+
+- **Ernani** ([@ernanibritto](https://x.com/ernanibritto)) — Technical co-founder.
+  Builds the surfcall engine end-to-end: ingest, comprehension, the access layer, and
+  the MCP surface.
+- **Leticia** ([@0xLeti](https://x.com/0xLeti)) — Co-founder, Product Designer. 8+
+  years designing for enterprises and startups; ex-Liga Ventures.
+
+---
+
+## License
+
+`LICENSE` not yet checked in — open-source vs proprietary is an open decision. Treat
+licensing as **repository-owner default** until the file lands.
+
+---
+
+*The comprehension layer for the agentic economy.*

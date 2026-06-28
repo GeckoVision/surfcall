@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import urllib.request
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Protocol, runtime_checkable
 
 AUTH_JWT_HEADER = "Authorization"
 AUTH_APITOKEN_HEADER = "X-Api-Token"
@@ -27,6 +27,17 @@ AUTH_APITOKEN_HEADER = "X-Api-Token"
 Transport = Callable[[str, str, dict, Any], tuple[int, Any]]
 # signer(message_bytes) -> base64 ed25519 detached signature
 Signer = Callable[[bytes], str]
+
+
+@runtime_checkable
+class AuthSession(Protocol):
+    """The whole engine/adapter seam: produce the auth headers for a request.
+
+    Any object with ``auth_headers() -> dict[str, str]`` is a valid session. A
+    paywalled API returns its tokens; a public API returns an empty dict.
+    """
+
+    def auth_headers(self) -> dict[str, str]: ...
 
 
 @dataclass
@@ -46,7 +57,9 @@ def activation_message(tx_sig: str, leagues: list[int], jwt: str) -> bytes:
     return f"{tx_sig}:{','.join(str(x) for x in leagues)}:{jwt}".encode("utf-8")
 
 
-def live_transport(method: str, url: str, headers: dict, json_body: Any) -> tuple[int, Any]:
+def live_transport(
+    method: str, url: str, headers: dict, json_body: Any
+) -> tuple[int, Any]:
     data = json.dumps(json_body).encode("utf-8") if json_body is not None else None
     hdrs = dict(headers)
     if data is not None:
@@ -61,7 +74,9 @@ def live_transport(method: str, url: str, headers: dict, json_body: Any) -> tupl
 
 
 def start_guest(base_url: str, transport: Transport = live_transport) -> str:
-    status, body = transport("POST", f"{base_url.rstrip('/')}/auth/guest/start", {}, None)
+    status, body = transport(
+        "POST", f"{base_url.rstrip('/')}/auth/guest/start", {}, None
+    )
     if isinstance(body, dict) and "token" in body:
         return body["token"]
     raise RuntimeError(f"guest/start did not return a token (status {status})")
@@ -107,3 +122,22 @@ def establish_session(
 def stub_session() -> Session:
     """A non-live session for recorded-mode demos (auth headers present, no real token)."""
     return Session(jwt="STUB_SESSION_JWT", api_token="STUB_API_TOKEN")
+
+
+@dataclass
+class NoAuthSession:
+    """Adapter for public, no-auth APIs (e.g. Pegana's public reads).
+
+    The ~empty adapter the architecture promises: the engine consumes auth as an
+    opaque header dict, and a no-auth API simply yields an empty one. An empty
+    ``auth_headers()`` also signals the client to hide any auth-gated operations
+    from the agent (it can't satisfy them).
+    """
+
+    def auth_headers(self) -> dict[str, str]:
+        return {}
+
+
+def public_session() -> NoAuthSession:
+    """A session for APIs whose endpoints need no auth (public reads only)."""
+    return NoAuthSession()

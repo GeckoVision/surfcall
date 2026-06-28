@@ -22,7 +22,8 @@ def test_extracts_all_operations():
 
 def test_path_param_is_resolved_and_required():
     odds = next(
-        o for o in _ops()
+        o
+        for o in _ops()
         if o.path == "/api/odds/snapshot/{fixtureId}" and o.method == "GET"
     )
     fixture_id = next(p for p in odds.parameters if p.name == "fixtureId")
@@ -39,15 +40,21 @@ def test_core_tags_present():
 
 def test_activate_endpoint_has_request_body():
     activate = next(
-        o for o in _ops()
-        if o.path == "/api/token/activate" and o.method == "POST"
+        o for o in _ops() if o.path == "/api/token/activate" and o.method == "POST"
     )
     assert activate.request_body is not None
 
 
 def test_resolve_refs_breaks_cycles():
     spec = {
-        "components": {"schemas": {"Node": {"type": "object", "properties": {"next": {"$ref": "#/components/schemas/Node"}}}}},
+        "components": {
+            "schemas": {
+                "Node": {
+                    "type": "object",
+                    "properties": {"next": {"$ref": "#/components/schemas/Node"}},
+                }
+            }
+        },
     }
     resolved = resolve_refs({"$ref": "#/components/schemas/Node"}, spec)
     # should terminate (not infinite-recurse) and keep a usable shape

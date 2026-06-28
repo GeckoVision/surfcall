@@ -11,7 +11,8 @@ FIXTURE = Path(__file__).parent / "fixtures" / "txodds_docs.yaml"
 
 def _tool(path: str, method: str = "GET"):
     op = next(
-        o for o in extract_operations(load_spec(str(FIXTURE)))
+        o
+        for o in extract_operations(load_spec(str(FIXTURE)))
         if o.path == path and o.method == method
     )
     return to_tool(op)

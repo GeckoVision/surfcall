@@ -26,7 +26,8 @@ def test_prefers_explicit_example_then_enum():
 
 def test_generates_a_response_sample_for_a_real_endpoint():
     op = next(
-        o for o in extract_operations(load_spec(str(FIXTURE)))
+        o
+        for o in extract_operations(load_spec(str(FIXTURE)))
         if o.path == "/api/odds/snapshot/{fixtureId}" and o.method == "GET"
     )
     schema = op.responses["200"]["content"]["application/json"]["schema"]

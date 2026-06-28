@@ -75,7 +75,12 @@ def _lookup(spec: dict[str, Any], ref: str) -> Any:
     return cur
 
 
-def resolve_refs(node: Any, spec: dict[str, Any], _depth: int = 0, _seen: frozenset[str] = frozenset()) -> Any:
+def resolve_refs(
+    node: Any,
+    spec: dict[str, Any],
+    _depth: int = 0,
+    _seen: frozenset[str] = frozenset(),
+) -> Any:
     """Recursively dereference local ``$ref``s, with cycle + depth guards.
 
     On a cycle or when the depth cap is hit, the ``$ref`` is left in place rather

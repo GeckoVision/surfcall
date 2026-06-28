@@ -22,7 +22,9 @@ def example_args(tool: dict[str, Any]) -> dict[str, Any]:
     schema = tool.get("inputSchema", {}) or {}
     props = schema.get("properties", {}) or {}
     required = set(schema.get("required", []) or [])
-    return {name: example_from_schema(props[name]) for name in props if name in required}
+    return {
+        name: example_from_schema(props[name]) for name in props if name in required
+    }
 
 
 def validate_tool(client: AgentApiClient, tool: dict[str, Any]) -> dict[str, Any]:

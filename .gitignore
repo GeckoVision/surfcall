@@ -20,3 +20,14 @@ dist/
 .DS_Store
 .idea/
 *.swp
+
+# Strategy / business docs — never in the public tree (canonical set lives in Notion)
+private/
+docs/
+CLAUDE.md
+
+# Claude Code local config, agents, and skills (internal)
+.claude/
+
+# MCP — real config carries a token; ship .mcp.json.example instead
+.mcp.json

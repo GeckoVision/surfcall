@@ -31,7 +31,9 @@ class CatalogEntry:
     @property
     def _haystack(self) -> str:
         o = self.operation
-        return " ".join([o.summary, o.description, o.path, " ".join(o.tags), o.operation_id])
+        return " ".join(
+            [o.summary, o.description, o.path, " ".join(o.tags), o.operation_id]
+        )
 
     def score(self, query_tokens: set[str]) -> int:
         if not query_tokens:

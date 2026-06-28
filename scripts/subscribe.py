@@ -34,7 +34,9 @@ TOKEN_2022 = Pubkey.from_string("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
 ATA_PROGRAM = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
 SYSTEM = Pubkey.from_string("11111111111111111111111111111111")
 
-SERVICE_LEVEL_ID = int(os.environ.get("SERVICE_LEVEL_ID", "12"))  # 12 = real-time (free)
+SERVICE_LEVEL_ID = int(
+    os.environ.get("SERVICE_LEVEL_ID", "12")
+)  # 12 = real-time (free)
 WEEKS = int(os.environ.get("WEEKS", "4"))
 DISCRIMINATOR = bytes([254, 28, 191, 138, 156, 179, 183, 53])
 
@@ -44,7 +46,9 @@ def pda(seeds: list[bytes]) -> Pubkey:
 
 
 def ata(owner: Pubkey, mint: Pubkey) -> Pubkey:
-    return Pubkey.find_program_address([bytes(owner), bytes(TOKEN_2022), bytes(mint)], ATA_PROGRAM)[0]
+    return Pubkey.find_program_address(
+        [bytes(owner), bytes(TOKEN_2022), bytes(mint)], ATA_PROGRAM
+    )[0]
 
 
 def create_ata_idempotent_ix(payer: Pubkey, owner: Pubkey, mint: Pubkey) -> Instruction:
@@ -65,7 +69,11 @@ def create_ata_idempotent_ix(payer: Pubkey, owner: Pubkey, mint: Pubkey) -> Inst
 
 
 def rpc(method: str, params: list) -> dict:
-    r = httpx.post(RPC, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params}, timeout=30)
+    r = httpx.post(
+        RPC,
+        json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+        timeout=30,
+    )
     return r.json()
 
 
@@ -74,7 +82,11 @@ def build_ix(user: Pubkey) -> Instruction:
     treasury_pda = pda([b"token_treasury_v2"])
     user_ta = ata(user, TXL_MINT)
     treasury_vault = ata(treasury_pda, TXL_MINT)
-    data = DISCRIMINATOR + SERVICE_LEVEL_ID.to_bytes(2, "little") + WEEKS.to_bytes(1, "little")
+    data = (
+        DISCRIMINATOR
+        + SERVICE_LEVEL_ID.to_bytes(2, "little")
+        + WEEKS.to_bytes(1, "little")
+    )
     metas = [
         AccountMeta(user, True, True),
         AccountMeta(pricing_matrix, False, False),
@@ -106,23 +118,48 @@ def main() -> int:
     if not broadcast:
         tx = Transaction.new_signed_with_payer(instructions, user, [kp], Hash.default())
         b64 = base64.b64encode(bytes(tx)).decode()
-        res = rpc("simulateTransaction", [b64, {"encoding": "base64", "sigVerify": False, "replaceRecentBlockhash": True, "commitment": "processed"}])
+        res = rpc(
+            "simulateTransaction",
+            [
+                b64,
+                {
+                    "encoding": "base64",
+                    "sigVerify": False,
+                    "replaceRecentBlockhash": True,
+                    "commitment": "processed",
+                },
+            ],
+        )
         val = res.get("result", {}).get("value", res)
         err = val.get("err") if isinstance(val, dict) else val
         print("\n=== SIMULATION ===")
         print("err:", err)
-        print("unitsConsumed:", val.get("unitsConsumed") if isinstance(val, dict) else "?")
+        print(
+            "unitsConsumed:", val.get("unitsConsumed") if isinstance(val, dict) else "?"
+        )
         for line in (val.get("logs") or [])[-20:] if isinstance(val, dict) else []:
             print("  ", line)
-        print("\nRESULT:", "PASS — safe to broadcast" if err is None else "FAIL — do not broadcast (see logs)")
+        print(
+            "\nRESULT:",
+            "PASS — safe to broadcast"
+            if err is None
+            else "FAIL — do not broadcast (see logs)",
+        )
         return 0 if err is None else 1
 
     # broadcast (founder-gated) -> confirm -> activate -> print tokens
     import time
 
-    bh = rpc("getLatestBlockhash", [{"commitment": "finalized"}])["result"]["value"]["blockhash"]
-    tx = Transaction.new_signed_with_payer(instructions, user, [kp], Hash.from_string(bh))
-    res = rpc("sendTransaction", [base64.b64encode(bytes(tx)).decode(), {"encoding": "base64"}])
+    bh = rpc("getLatestBlockhash", [{"commitment": "finalized"}])["result"]["value"][
+        "blockhash"
+    ]
+    tx = Transaction.new_signed_with_payer(
+        instructions, user, [kp], Hash.from_string(bh)
+    )
+    res = rpc(
+        "sendTransaction",
+        [base64.b64encode(bytes(tx)).decode(), {"encoding": "base64"}],
+    )
     txsig = res.get("result")
     print("\n=== BROADCAST ===")
     if not txsig:
@@ -130,7 +167,11 @@ def main() -> int:
         return 1
     print("txSig:", txsig)
     for _ in range(40):
-        st = rpc("getSignatureStatuses", [[txsig]]).get("result", {}).get("value", [None])[0]
+        st = (
+            rpc("getSignatureStatuses", [[txsig]])
+            .get("result", {})
+            .get("value", [None])[0]
+        )
         if st and st.get("err"):
             print("tx failed on-chain:", st["err"])
             return 1
@@ -149,7 +190,11 @@ def main() -> int:
         headers={"Authorization": f"Bearer {jwt}"},
         timeout=30,
     )
-    token = act.text.strip().strip('"') if "text/plain" in act.headers.get("content-type", "") else act.json().get("token")
+    token = (
+        act.text.strip().strip('"')
+        if "text/plain" in act.headers.get("content-type", "")
+        else act.json().get("token")
+    )
     sess_path = os.path.expanduser("~/.gecko/txodds-session.json")
     with open(sess_path, "w") as fh:
         json.dump({"jwt": jwt, "api_token": token}, fh)

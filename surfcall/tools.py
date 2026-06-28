@@ -77,11 +77,38 @@ def _safe_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]", "_", name)[:64]
 
 
+def _security_requires_auth(op: Operation) -> bool:
+    """True only if *every* way to call this op needs auth.
+
+    OpenAPI ``security`` is a list of alternative requirement objects; satisfying
+    ANY one grants access. An empty ``{}`` requirement means "no auth is also
+    acceptable", so its presence makes auth optional. An empty/absent list means
+    no auth at all.
+    """
+    sec = op.security
+    if not sec:
+        return False
+    return all(bool(req) for req in sec)
+
+
+def _auth_schemes(op: Operation) -> list[str]:
+    """The security-scheme names this op references (for diagnostics/comprehension)."""
+    names: set[str] = set()
+    for req in op.security or []:
+        if isinstance(req, dict):
+            names.update(req.keys())
+    return sorted(names)
+
+
 def to_tool(op: Operation) -> dict[str, Any]:
     return {
         "name": _safe_name(op.operation_id),
         "description": question_description(op),
         "inputSchema": _input_schema(op),
+        # Comprehension metadata: whether this op is auth-gated and which schemes.
+        # The client uses this to hide ops a no-auth session can't satisfy.
+        "requires_auth": _security_requires_auth(op),
+        "auth_schemes": _auth_schemes(op),
         "_invoke": {
             "method": op.method,
             "path": op.path,

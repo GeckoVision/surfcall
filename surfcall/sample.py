@@ -47,5 +47,7 @@ def example_from_schema(schema: Any, _depth: int = 0) -> Any:
     if t == "boolean":
         return False
     if t == "string":
-        return "2026-06-26T00:00:00Z" if schema.get("format") == "date-time" else "sample"
+        return (
+            "2026-06-26T00:00:00Z" if schema.get("format") == "date-time" else "sample"
+        )
     return None

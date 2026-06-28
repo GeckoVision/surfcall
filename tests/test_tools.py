@@ -12,7 +12,8 @@ def _ops():
 
 def _odds_snapshot():
     return next(
-        o for o in _ops()
+        o
+        for o in _ops()
         if o.path == "/api/odds/snapshot/{fixtureId}" and o.method == "GET"
     )
 

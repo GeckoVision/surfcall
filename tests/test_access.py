@@ -39,7 +39,11 @@ def test_establish_session_flow_is_correct():
         return "SIG_B64"
 
     session = establish_session(
-        "https://txline.txodds.com", "TXSIG", [39], fake_signer, transport=fake_transport
+        "https://txline.txodds.com",
+        "TXSIG",
+        [39],
+        fake_signer,
+        transport=fake_transport,
     )
     assert session.jwt == "THE_JWT"
     assert session.api_token == "THE_API_TOKEN"
