@@ -42,7 +42,7 @@ MCP_PATH = "/mcp"
 
 _INSTALL_HINT = (
     "Install the serve extra to run the HTTP server: uv sync --extra serve "
-    "(or: uv pip install 'surfcall[serve]')"
+    "(or: uv pip install 'gecko-surf[serve]')"
 )
 
 

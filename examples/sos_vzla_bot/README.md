@@ -1,18 +1,18 @@
-# SOS Venezuela 2026 — Telegram bot (powered by surfcall)
+# SOS Venezuela 2026 — Telegram bot (powered by Gecko)
 
 A Spanish-first Telegram bot that lets **anyone** — no coding needed — query the
 [SOS Venezuela 2026](https://sosvenezuela2026.com) humanitarian data by chatting:
 search missing/found people, the hazard map, aggregate stats, structural-damage
 validations, and earthquake news.
 
-It is an **LLM agent that USES the API _through_ surfcall** — surfcall's first
+It is an **LLM agent that USES the API _through_ Gecko** — Gecko's first
 humanitarian dogfood and API #3. Built for Build4Venezuela.
 
 ```
 schema.sql + live API ──▶ hand-authored OpenAPI 3.1 stub (spec/)
                                │
                                ▼
-                 surfcall ingest → McpSurface tools   (surfcall_tools.py)
+                 Gecko ingest → McpSurface tools   (surfcall_tools.py)
                                │
                                ▼
          Claude tool-use loop  (agent.py) ──▶ Telegram long-polling  (bot.py) ──▶ citizen
@@ -23,13 +23,13 @@ Architecture is four small, independently testable units:
 | File | Purpose |
 |---|---|
 | `spec/sosvenezuela_openapi.json` | The hand-authored OpenAPI 3.1 stub (5 public GETs, canonical enums baked in). Also the artifact we offer upstream. |
-| `surfcall_tools.py` | The surfcall⇄LLM seam: builds the engine, exposes the **5 public reads only** (allow-listed), sanitizes + caps output. |
+| `surfcall_tools.py` | The Gecko⇄LLM seam: builds the engine, exposes the **5 public reads only** (allow-listed), sanitizes + caps output. |
 | `agent.py` | The Claude tool-use loop. `llm` is injected, so it tests offline. |
 | `bot.py` | Telegram long-polling transport + per-user rate limit. Pure `handle_message` for tests. |
 
 ## Run the tests (offline, $0, no deps)
 
-The whole recorded path needs only the surfcall engine — **no Anthropic, no Telegram**:
+The whole recorded path needs only the Gecko engine — **no Anthropic, no Telegram**:
 
 ```bash
 uv run pytest examples/sos_vzla_bot/tests/ -q
@@ -73,7 +73,7 @@ Long-polling — no public URL, $0 hosting. Hits the real public SOS Venezuela A
 ## Honest notes
 
 - **Free for users; we pay the LLM** (cents per chat on Haiku 4.5).
-- It validates **comprehension / dogfood**, not surfcall's WTP thesis — a free
+- It validates **comprehension / dogfood**, not Gecko's WTP thesis — a free
   humanitarian API gives zero willingness-to-pay signal.
 - It mirrors the platform's **privacy** stance: cédulas stay masked, coordinates
   approximate, minors protected. The bot never de-masks anything.

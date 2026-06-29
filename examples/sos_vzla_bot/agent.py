@@ -1,12 +1,12 @@
 """The Claude tool-use loop — a Telegram message in, a Spanish reply out.
 
-This is the "agent that USES the API through surfcall" — the thesis embodied. It
+This is the "agent that USES the API through Gecko" — the thesis embodied. It
 is a manual agentic loop (per the Anthropic Messages API): send the message + the
-allow-listed surfcall tools; while the model wants a tool, execute it through the
+allow-listed Gecko tools; while the model wants a tool, execute it through the
 ``SurfcallTools`` seam and feed the result back; stop on ``end_turn``.
 
 ``llm`` is injected (the real ``anthropic.Anthropic`` client OR a fake), so the
-whole loop is testable offline with surfcall's recorded mode — no network, no
+whole loop is testable offline with Gecko's recorded mode — no network, no
 spend, no Anthropic import here. Bounded by ``max_iters`` so a misbehaving model
 can never loop forever.
 """

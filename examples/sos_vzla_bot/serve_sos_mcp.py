@@ -6,7 +6,7 @@ your laptop, so you can test the real product flow with zero deploy:
     uv run --extra serve python -m examples.sos_vzla_bot.serve_sos_mcp
 
 Then add  http://127.0.0.1:8000/mcp  as an MCP server in Claude Code / Cursor and call
-the SOS tools — they hit the LIVE SOS Venezuela API through surfcall (mode="live").
+the SOS tools — they hit the LIVE SOS Venezuela API through Gecko (mode="live").
 """
 
 from __future__ import annotations

@@ -156,7 +156,7 @@ def openrouter_llm(
     client = OpenAI(
         api_key=api_key,
         base_url=base_url,
-        default_headers={"X-Title": "SOS Venezuela 2026 bot (surfcall)"},
+        default_headers={"X-Title": "SOS Venezuela 2026 bot (Gecko)"},
     )
     return OpenAICompatLLM(client)
 

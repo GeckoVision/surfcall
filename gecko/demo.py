@@ -78,7 +78,7 @@ def live_demo() -> None:
         print("No live session — run scripts/subscribe.py --broadcast first.")
         return
     client = AgentApiClient(DEFAULT_SPEC, session=Session(jwt=jwt, api_token=token))
-    print("surfcall — LIVE mode (real TxODDS World Cup data)\n" + "=" * 56)
+    print("Gecko — LIVE mode (real TxODDS World Cup data)\n" + "=" * 56)
 
     def tool_for(path: str) -> str:
         return next(
@@ -133,7 +133,7 @@ def main() -> None:
     ):
         live_demo()
         return
-    print("surfcall — make any API agent-usable (recorded mode, $0)\n" + "=" * 56)
+    print("Gecko — make any API agent-usable (recorded mode, $0)\n" + "=" * 56)
     for step in run():
         print(f"\nGOAL: {step['goal']}")
         if step.get("error"):
