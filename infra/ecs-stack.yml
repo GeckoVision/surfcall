@@ -1,0 +1,431 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: surfcall – ECS Fargate stack (single service, ALB, port 8000)
+
+# =============================================================================
+# surfcall comprehension MCP — STATELESS ECS Fargate service behind an ALB.
+# Adapted from gecko-mcpay-api/infra/ecs-stack.yml, stripped to stateless:
+# NO database, NO SSM/Secrets, NO ops alerts. Container = uvicorn on :8000
+# serving Streamable-HTTP /mcp + a plain /healthz (the ALB health target).
+# HTTPS via the mcp.geckovision.tech ACM cert; HTTP redirects to HTTPS.
+# Deploy: ./infra/deploy.sh  (region us-east-2, stack surfcall-mcp-ecs).
+# =============================================================================
+
+Parameters:
+
+  Image:
+    Type: String
+    Default: PLACEHOLDER_SET_BY_DEPLOY_SCRIPT
+
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [production, staging]
+
+  CertificateArn:
+    Type: String
+    Default: arn:aws:acm:us-east-2:668955700762:certificate/b6d736cc-b8b8-49a4-a747-8c842993af99
+    Description: ACM cert ARN for mcp.geckovision.tech HTTPS (deploy.sh also passes it).
+
+  ExecutionRoleArn:
+    Type: String
+    Default: ''
+
+  TaskRoleArn:
+    Type: String
+    Default: ''
+
+  # Reuse an existing VPC (e.g. the gecko-api VPC) — surfcall adds NO new VPC/NAT/EIP.
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Existing VPC to deploy into (no new VPC/NAT is created).
+
+  PublicSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Existing public subnets for the internet-facing ALB.
+
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Existing private subnets for the Fargate tasks (egress via the VPC's NAT).
+
+Conditions:
+  UseDefaultExecutionRole: !Equals [!Ref ExecutionRoleArn, '']
+  UseDefaultTaskRole:      !Equals [!Ref TaskRoleArn, '']
+  HasCertificate:          !Not [!Equals [!Ref CertificateArn, '']]
+
+Resources:
+
+  # ── ECS Cluster ───────────────────────────────────────────────
+
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: surfcall
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+
+  # ── ALB ───────────────────────────────────────────────────────
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB - allow HTTP/HTTPS from internet
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 80,  ToPort: 80,  CidrIp: 0.0.0.0/0}
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0}
+      SecurityGroupEgress:
+        - {IpProtocol: -1, CidrIp: 0.0.0.0/0}
+
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: surfcall-alb
+      Scheme: internet-facing
+      Type: application
+      Subnets: !Ref PublicSubnetIds
+      SecurityGroups: [!Ref ALBSecurityGroup]
+      # Force HTTP/1.1 only. frames.ag's edge (and several other Node-fetch
+      # x402 clients we tested) cannot complete TLS+ALPN handshakes when
+      # ALB negotiates HTTP/2 — they fast-fail with "Failed to reach target"
+      # in ~500ms. Disabling h2 eliminates that class of failure entirely
+      # at negligible perf cost for a low-RPS API.
+      LoadBalancerAttributes:
+        - Key: routing.http2.enabled
+          Value: 'false'
+        # Issue #16: cold-start 7-agent panel runs land in a 30-60s wall-clock
+        # window; the AWS default ALB idle timeout (60s) was 504-ing roughly
+        # 1-in-3 cold basic-tier calls. Bumped to 120s to cover the upper tail
+        # without masking a deeper perf regression — anything longer should
+        # be treated as a perf bug, not a timeout knob to widen further.
+        - Key: idle_timeout.timeout_seconds
+          Value: '120'
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: surfcall-tg
+      Port: 8000
+      Protocol: HTTP
+      VpcId: !Ref VpcId
+      TargetType: ip
+      HealthCheckPath: /healthz
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: '200'
+
+  ALBListenerHTTP:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - !If
+          - HasCertificate
+          - Type: redirect
+            RedirectConfig:
+              Protocol: HTTPS
+              Port: '443'
+              StatusCode: HTTP_301
+          - Type: forward
+            TargetGroupArn: !Ref ALBTargetGroup
+
+  ALBListenerHTTPS:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: HasCertificate
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Port: 443
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates:
+        - CertificateArn: !Ref CertificateArn
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+
+  # ── Bot-scanner blocklist (S1-08) ────────────────────────────
+  # Internet-wide HTTP scanners probe WordPress / dotfile / admin paths.
+  # Terminate them at the ALB with a fixed 403 so they never reach Fargate
+  # and don't pollute /ecs/surfcall logs. Path-patterns are case-sensitive
+  # by default in ALB; scanners use lowercase variants overwhelmingly.
+  # Each rule consolidates up to 5 patterns (ALB max per condition).
+  #
+  # IMPORTANT: do NOT add `/.well-known/*` here — `/.well-known/x402`
+  # (our payment manifest) and `/.well-known/security.txt` must pass.
+
+  BlocklistRuleWordPressHTTPS:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Condition: HasCertificate
+    Properties:
+      ListenerArn: !Ref ALBListenerHTTPS
+      Priority: 10
+      Conditions:
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /wp-admin*
+              - /wp-login*
+              - /wp-content*
+              - /wp-includes*
+              - /xmlrpc.php*
+      Actions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: '403'
+            ContentType: text/plain
+            MessageBody: ''
+
+  BlocklistRuleDotfilesHTTPS:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Condition: HasCertificate
+    Properties:
+      ListenerArn: !Ref ALBListenerHTTPS
+      Priority: 11
+      Conditions:
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /.env*
+              - /.git*
+              - /.aws*
+              - /.ssh*
+              - /.htaccess*
+      Actions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: '403'
+            ContentType: text/plain
+            MessageBody: ''
+
+  BlocklistRuleAdminToolsHTTPS:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Condition: HasCertificate
+    Properties:
+      ListenerArn: !Ref ALBListenerHTTPS
+      Priority: 12
+      Conditions:
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /phpmyadmin*
+              - /admin*
+              - /administrator*
+              - /server-status*
+              - /vendor/phpunit*
+      Actions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: '403'
+            ContentType: text/plain
+            MessageBody: ''
+
+  # WebLogic / Spring Boot probes — bots scan for old Java-stack RCEs
+  # (CVE-2017-3506 BEA WebLogic console, CVE-2022-22965 Spring4Shell via
+  # /actuator). FastAPI never serves these paths; terminate at edge.
+  BlocklistRuleJavaStackHTTPS:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Condition: HasCertificate
+    Properties:
+      ListenerArn: !Ref ALBListenerHTTPS
+      Priority: 13
+      Conditions:
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /console*
+              - /weblogic*
+              - /actuator*
+              - /jenkins*
+              - /solr*
+      Actions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: '403'
+            ContentType: text/plain
+            MessageBody: ''
+
+  BlocklistRuleWordPressHTTP:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListenerHTTP
+      Priority: 10
+      Conditions:
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /wp-admin*
+              - /wp-login*
+              - /wp-content*
+              - /wp-includes*
+              - /xmlrpc.php*
+      Actions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: '403'
+            ContentType: text/plain
+            MessageBody: ''
+
+  BlocklistRuleDotfilesHTTP:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListenerHTTP
+      Priority: 11
+      Conditions:
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /.env*
+              - /.git*
+              - /.aws*
+              - /.ssh*
+              - /.htaccess*
+      Actions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: '403'
+            ContentType: text/plain
+            MessageBody: ''
+
+  BlocklistRuleAdminToolsHTTP:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListenerHTTP
+      Priority: 12
+      Conditions:
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /phpmyadmin*
+              - /admin*
+              - /administrator*
+              - /server-status*
+              - /vendor/phpunit*
+      Actions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: '403'
+            ContentType: text/plain
+            MessageBody: ''
+
+  BlocklistRuleJavaStackHTTP:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref ALBListenerHTTP
+      Priority: 13
+      Conditions:
+        - Field: path-pattern
+          PathPatternConfig:
+            Values:
+              - /console*
+              - /weblogic*
+              - /actuator*
+              - /jenkins*
+              - /solr*
+      Actions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: '403'
+            ContentType: text/plain
+            MessageBody: ''
+
+  # ── api service (public, behind ALB) ─────────────────────────
+
+  ApiSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: api (:8000) - allow from ALB
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      SecurityGroupEgress:
+        - {IpProtocol: -1, CidrIp: 0.0.0.0/0}
+
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/surfcall
+      RetentionInDays: 30
+
+  ApiTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn: ApiLogGroup
+    Properties:
+      Family: surfcall
+      Cpu: '512'
+      Memory: '1024'
+      NetworkMode: awsvpc
+      RequiresCompatibilities: [FARGATE]
+      ExecutionRoleArn: !If
+        - UseDefaultExecutionRole
+        - !Sub arn:aws:iam::${AWS::AccountId}:role/ecsTaskExecutionRole
+        - !Ref ExecutionRoleArn
+      TaskRoleArn: !If
+        - UseDefaultTaskRole
+        - !Sub arn:aws:iam::${AWS::AccountId}:role/EcsTaskRole
+        - !Ref TaskRoleArn
+      ContainerDefinitions:
+        - Name: api
+          Image: !Ref Image
+          Essential: true
+          PortMappings:
+            - {ContainerPort: 8000, Protocol: tcp}
+          # Stateless: hard-coded env only — no Secrets/SSM (surfcall reads no secrets).
+          Environment:
+            - {Name: PORT,        Value: '8000'}
+            - {Name: ENVIRONMENT, Value: !Ref Environment}
+            - {Name: PYTHONUNBUFFERED,     Value: '1'}
+            - {Name: PYTHONDONTWRITEBYTECODE, Value: '1'}
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: /ecs/surfcall
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+
+  ApiService:
+    Type: AWS::ECS::Service
+    DependsOn: [ALBListenerHTTP]
+    Properties:
+      ServiceName: surfcall
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref ApiTaskDef
+      LaunchType: FARGATE
+      DesiredCount: 1
+      HealthCheckGracePeriodSeconds: 60
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref PrivateSubnetIds
+          SecurityGroups: [!Ref ApiSecurityGroup]
+          AssignPublicIp: DISABLED
+      LoadBalancers:
+        - ContainerName: api
+          ContainerPort: 8000
+          TargetGroupArn: !Ref ALBTargetGroup
+
+
+Outputs:
+
+  ALBDNSName:
+    Description: ALB DNS — point mcp.geckovision.tech A-alias here
+    Value: !GetAtt ALB.DNSName
+    Export:
+      Name: SurfcallALBDNSName
+
+  ClusterName:
+    Value: !Ref ECSCluster
+    Export:
+      Name: SurfcallClusterName
+
+  ServiceName:
+    Value: !GetAtt ApiService.Name
+    Export:
+      Name: SurfcallServiceName
+

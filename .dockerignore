@@ -1,0 +1,19 @@
+# Keep the build context small and secrets out of the image (invariant #1).
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+# secrets / local env — must never enter the image
+.env
+.env.*
+.env.tgbot
+private/
+# not needed at runtime
+tests/
+docs/
+.github/
+*.md
+!README.md
