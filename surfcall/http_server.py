@@ -102,6 +102,7 @@ def build_http_app(
         from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
         from mcp.server.transport_security import TransportSecuritySettings
         from starlette.applications import Starlette
+        from starlette.responses import PlainTextResponse
         from starlette.routing import Route
     except ImportError as exc:  # pragma: no cover - exercised only without the extra
         raise SystemExit(_INSTALL_HINT) from exc
@@ -195,8 +196,19 @@ def build_http_app(
     manager = StreamableHTTPSessionManager(app=server, security_settings=security)
     asgi_app = StreamableHTTPASGIApp(manager)
 
+    async def _healthz(_request: Any) -> Any:
+        # Plain Starlette route — it never enters StreamableHTTPASGIApp, so the
+        # DNS-rebinding guard (which only wraps /mcp) doesn't run here. The ALB
+        # target-group health check sends Host: <task-ip>:8000, which the
+        # allowed_hosts allowlist would otherwise reject — bypassing it keeps the
+        # target healthy without allowlisting the private IP. Matcher = 200.
+        return PlainTextResponse("ok")
+
     return Starlette(
-        routes=[Route(MCP_PATH, endpoint=asgi_app)],
+        routes=[
+            Route("/healthz", endpoint=_healthz),
+            Route(MCP_PATH, endpoint=asgi_app),
+        ],
         lifespan=lambda _app: manager.run(),
     )
 
