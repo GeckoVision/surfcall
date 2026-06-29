@@ -200,7 +200,7 @@ def main() -> int:
         json.dump({"jwt": jwt, "api_token": token}, fh)
     os.chmod(sess_path, 0o600)
     print("\n=== ACTIVATED — live session ready ===")
-    print("  saved ->", sess_path, "(surfcall auto-uses it; token not printed)")
+    print("  saved ->", sess_path, "(Gecko auto-uses it; token not printed)")
     return 0
 
 

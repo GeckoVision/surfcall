@@ -1,6 +1,6 @@
 # `_starter` — build an app on ANY API in ~20 lines
 
-The smallest possible app on top of surfcall. No LLM, no API keys, no network —
+The smallest possible app on top of Gecko. No LLM, no API keys, no network —
 it runs in **recorded mode** ($0) so you can prove an API is callable-correctly
 before spending a cent or a token. Fork it for your own API.
 
@@ -22,7 +22,7 @@ synthesized from the response schema.
 ## What it shows
 
 ```python
-from surfcall import AgentApiClient, public_session
+from gecko import AgentApiClient, public_session
 
 client = AgentApiClient(spec, session=public_session())
 hit = client.search("what you want")[0]          # intent -> right endpoint
@@ -36,10 +36,10 @@ That's the whole contract: **comprehend → find → first-call-correct**.
 
 | You want… | Change |
 |---|---|
-| Real data | pass a real `Session` (`surfcall.access`) + `mode="live"` |
+| Real data | pass a real `Session` (`gecko.access`) + `mode="live"` |
 | A paywalled API | a BYOK `Session` whose `auth_headers()` returns your creds — injected at call time, never in the tool defs |
 | A full AI agent | wrap `client.search` / `client.call` in an LLM tool-use loop — see **[`examples/sos_vzla_bot/`](../sos_vzla_bot/)** (Telegram + Claude/OpenRouter, allow-list + sanitize + never-raise) |
-| An MCP endpoint for Claude/Cursor | `uvx surfcall serve <openapi-url>` — zero code, prints the one-click add string |
+| An MCP endpoint for Claude/Cursor | `gecko <openapi-url>` — zero code, prints the one-click add string |
 
-surfcall stays **control-plane only**: it never stores the API's responses — your
+Gecko stays **control-plane only**: it never stores the API's responses — your
 app calls the upstream API directly for data.

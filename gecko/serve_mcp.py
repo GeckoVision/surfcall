@@ -22,7 +22,7 @@ from pathlib import Path
 
 from .http_server import serve_http
 
-# In the image: /app/surfcall/serve_mcp.py -> parents[1] = /app (repo root).
+# In the image: /app/gecko/serve_mcp.py -> parents[1] = /app (repo root).
 SPEC_PATH = (
     Path(__file__).resolve().parents[1]
     / "examples"
