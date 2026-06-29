@@ -1,0 +1,47 @@
+1
+00:00:00,600 --> 00:00:04,800
+After Venezuela's earthquakes, finding
+emergency help shouldn't be hard.
+
+2
+00:00:04,800 --> 00:00:08,200
+It's a Telegram bot for
+the earthquake response.
+
+3
+00:00:08,200 --> 00:00:13,900
+Ask in plain Spanish, and get clear answers
+on shelters, water, and missing people.
+
+4
+00:00:14,700 --> 00:00:19,000
+Ask how many people are reported missing —
+it answers from live data.
+
+5
+00:00:19,000 --> 00:00:23,200
+Search for someone by name —
+real records, in seconds.
+
+6
+00:00:23,200 --> 00:00:26,600
+Ask for the latest news — always current.
+
+7
+00:00:26,600 --> 00:00:30,900
+No app. No sign-up. Just help,
+where people already are.
+
+8
+00:00:31,700 --> 00:00:34,600
+And behind it: Gecko.
+
+9
+00:00:34,600 --> 00:00:39,400
+Point it at any API's spec, and in seconds
+it's agent-usable.
+
+10
+00:00:39,400 --> 00:00:43,700
+The agent calls it correctly, first try —
+zero integration code.

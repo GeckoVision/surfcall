@@ -1,8 +1,37 @@
-# Voiceover script + edit guide — Gecko demo (~90s)
+# Voiceover script + edit guide — Gecko demo
 
-Record the voiceover separately (calm, confident, ~135 wpm), then lay it under the Loom
-footage. Each beat says **what to keep** so you can cut the long recording down to it.
-Honest throughout — every claim below is real.
+Two things live here:
+1. **The cut we shipped** — the ~50s neutral, bot-first narration actually produced
+   (`gecko-demo.mp4`), with TTS voice and burned subtitles. Use it to reproduce or re-time.
+2. **The ~90s edit guide** (below the divider) — the original product-first storyboard with
+   per-beat "what to keep" notes for trimming a long Loom recording.
+
+Honest throughout — every claim is real.
+
+## The cut we shipped (neutral, bot-first, ~50s)
+
+Four voiceover beats, **brand-neutral** so the narration sits cleanly over both the landing
+page ("Ayuda Venezuela") and the bot ("SOS Venezuela 2026") without naming — and so
+contradicting — either:
+
+| # | Segment (footage) | Voiceover |
+|---|---|---|
+| 1 | Landing page (~0–14s) | *"After Venezuela's earthquakes, finding emergency help shouldn't be hard. It's a Telegram bot for the earthquake response. Ask in plain Spanish, and get clear answers about shelters, water, and missing people."* |
+| 2 | Telegram bot chat (~14–31s) | *"Ask how many people are reported missing — it answers from live data. Search for someone by name — real records, in seconds. Ask for the latest news — always current. No app to install, no sign-up. Just help, where people already are."* |
+| 3 | Terminal — `gecko` (~31–43s) | *"And behind it: Gecko. Point it at any API's spec, and in seconds it's agent-usable. The agent calls it correctly, first try, with zero integration code."* |
+| 4 | Close card (~43–50s) | *"Gecko. Make any API agent-usable. pip install gecko-surf."* |
+
+Subtitles for beats 1–3 are in [`voiceover.srt`](voiceover.srt) (the close card carries its
+own on-screen text). The voice is Deepgram TTS (`aura-2-thalia-en`); regenerate a beat with:
+
+```bash
+curl -s -X POST "https://api.deepgram.com/v1/speak?model=aura-2-thalia-en&encoding=linear16&container=wav" \
+  -H "Authorization: Token $DEEPGRAM_API_KEY" -H "Content-Type: application/json" \
+  -d '{"text":"<beat text>"}' -o vo.wav
+```
+
+Assembly recipe (segments → voice → subtitles → mux) is in
+[README.md](README.md#assembling-the-narrated-cut).
 
 ---
 

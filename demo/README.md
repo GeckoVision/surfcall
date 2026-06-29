@@ -47,7 +47,35 @@ to the chat.
 ---
 
 ## Assets in this kit
-- `petstore.gif` — the real `gecko serve` terminal clip (drop-in).
+- `petstore.gif` — the real `gecko serve` terminal clip (drop-in GIF).
+- `gecko-terminal.mp4` — the same terminal run as a 1920×1080 clip (drop-in for editors).
+- `make_terminal_clip.py` — regenerates the terminal GIF/clip from the real CLI output.
+- `close-card.png` + `make_close_card.py` — the closing card (Gecko / `pip install gecko-surf`).
+- `voiceover.md` — the narration (shipped neutral cut + the ~90s edit guide).
+- `voiceover.srt` — burnable subtitles for the shipped narration.
 - `gecko-demo.tape` — a vhs script to record your own crisp terminal GIF.
 - More GIFs for B-roll/cutaways live in [`../docs/assets/`](../docs/assets/) (hero,
   first-try, recorded, ssrf, rawtool, auth, surfacerev).
+
+## Assembling the narrated cut
+
+The shipped ~50s video is **landing page → bot chat → terminal → close card**, with a TTS
+voiceover, burned subtitles, and a soft music bed. The landing/bot footage is *yours* and
+is intentionally **not** in this public repo — only the product-side terminal clip and card
+live here. To reproduce:
+
+1. **Segments** — normalize each to 1920×1080 / 30fps. Crop the landing to drop the Loom
+   recorder overlay; crop the desktop bot capture to the chat column. The terminal clip is
+   already sized; build the held close card from the card image:
+   ```bash
+   ffmpeg -loop 1 -i close-card.png -t 6.6 \
+     -vf "fps=30,fade=t=in:st=0:d=0.6,format=yuv420p" -c:v libx264 -crf 18 close.mp4
+   ```
+2. **Voice** — synth the four beats from `voiceover.md` (Deepgram `aura-2`), place each at
+   its segment start with `adelay`, and mix under a low (~0.08) ambient bed.
+3. **Burn subtitles + mux**:
+   ```bash
+   ffmpeg -i video.mp4 -i audio.wav \
+     -vf "subtitles=voiceover.srt:force_style='Fontsize=13,Outline=2,MarginV=45'" \
+     -map 0:v -map 1:a -c:v libx264 -crf 19 -c:a aac -b:a 192k -shortest gecko-demo.mp4
+   ```
