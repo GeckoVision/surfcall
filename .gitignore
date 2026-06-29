@@ -23,7 +23,12 @@ dist/
 
 # Strategy / business docs — never in the public tree (canonical set lives in Notion)
 private/
-docs/
+# Internal planning under docs/ stays private; the public PRODUCT docs
+# (docs/*.md, docs/assets/) ship in the open tree.
+docs/decisions/
+docs/discovery/
+docs/strategy/
+docs/superpowers/
 CLAUDE.md
 
 # Claude Code local config, agents, and skills (internal)
