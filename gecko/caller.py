@@ -16,7 +16,7 @@ import re
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 
 from .netguard import validate_public_url
 
@@ -35,13 +35,43 @@ class PreparedRequest:
     json_body: Any | None = None
 
 
+def _missing_required(tool: dict[str, Any], args: dict[str, Any]) -> list[str]:
+    """Declared-required fields the agent omitted: top-level + one level into body.
+
+    Validates only the tool's DECLARED ``required`` (top-level and the body schema's
+    own ``required``). It does NOT check types, enums, or units — just presence, so a
+    structurally-malformed call is caught instead of fired.
+    """
+    schema = tool.get("inputSchema", {}) or {}
+    properties: dict[str, Any] = schema.get("properties", {}) or {}
+    missing = [name for name in (schema.get("required") or []) if name not in args]
+    body_schema = properties.get("body")
+    if isinstance(body_schema, dict):
+        body = args.get("body")
+        body = body if isinstance(body, dict) else {}
+        missing += [
+            f"body.{name}"
+            for name in (body_schema.get("required") or [])
+            if name not in body
+        ]
+    return missing
+
+
 def build_request(
     tool: dict[str, Any],
     args: dict[str, Any],
     base_url: str,
     auth: dict[str, str] | None = None,
+    allowed_auth_hosts: set[str] | None = None,
 ) -> PreparedRequest:
     invoke = tool["_invoke"]
+
+    # Validate declared-required fields BEFORE building anything — catch the malformed
+    # call the agent can't see rather than firing it.
+    missing_required = _missing_required(tool, args)
+    if missing_required:
+        raise CallError(f"missing required field(s): {', '.join(missing_required)}")
+
     locations: dict[str, str] = invoke.get("param_locations", {})
     url_path = invoke["path"]
     query: dict[str, Any] = {}
@@ -64,12 +94,26 @@ def build_request(
             f"missing required path parameter(s): {', '.join(missing)} for {invoke['path']}"
         )
 
-    if auth:
-        headers.update(auth)
-
     url = base_url.rstrip("/") + url_path
     if query:
         url = f"{url}?{urlencode(query, doseq=True)}"
+
+    # Token-exfil guard: base_url derives from the spec's (untrusted) servers[].url. If
+    # we have a secret to inject and the caller pinned an allowlist, refuse to send it to
+    # any host not on that list. The message names ONLY the host — never the auth value.
+    #
+    # RESIDUAL: with no explicit base_url the client trusts the spec and its allowlist is
+    # just the spec's own server hosts, so a wholly-poisoned servers[] still matches
+    # itself. This protects the pinned (explicit-base_url) mode and any future per-op
+    # server override / url drift; full trusted-host pinning is a surface-level follow-up.
+    if auth:
+        if allowed_auth_hosts is not None:
+            host = (urlsplit(url).hostname or "").lower()
+            if host not in allowed_auth_hosts:
+                raise CallError(
+                    f"refusing to inject auth toward unexpected host: {host}"
+                )
+        headers.update(auth)
 
     return PreparedRequest(
         method=invoke["method"],

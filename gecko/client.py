@@ -9,6 +9,7 @@ caller (correct request) -> access (auth) -> response. Two modes:
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlsplit
 
 from .access import AuthSession, stub_session
 from .caller import CallError, PreparedRequest, build_request, execute
@@ -25,9 +26,32 @@ class AgentApiClient:
         base_url: str | None = None,
         session: AuthSession | None = None,
     ):
+        """Make an API agent-usable from its OpenAPI spec.
+
+        Live mode targets ``servers[0].url`` from the spec unless an explicit
+        ``base_url`` is given. This is a money-API footgun: if the spec lists a
+        production server first, a live call hits production — pass the sandbox
+        server's URL explicitly for live tests. An explicit ``base_url`` also pins
+        auth injection to that one host (see ``self._auth_allowed_hosts``).
+        """
         self.spec = load_spec(spec) if isinstance(spec, str) else spec
-        servers = self.spec.get("servers") or [{}]
+        # The raw spec servers list, exposed so callers can choose a non-default
+        # server explicitly (e.g. a sandbox) instead of silently using servers[0].
+        self.servers = self.spec.get("servers") or []
+        servers = self.servers or [{}]
         self.base_url = base_url or servers[0].get("url", "")
+        # Hosts we'll let the session's auth headers reach. Explicit base_url => pin to
+        # that one host (the protected mode). Otherwise trust the spec's own server
+        # hosts. See the RESIDUAL note in caller.build_request.
+        if base_url is not None:
+            pinned = urlsplit(base_url).hostname
+            self._auth_allowed_hosts: set[str] = {pinned.lower()} if pinned else set()
+        else:
+            self._auth_allowed_hosts = {
+                host.lower()
+                for s in servers
+                if isinstance(s, dict) and (host := urlsplit(s.get("url", "")).hostname)
+            }
         self.operations = extract_operations(self.spec)
         self.catalog = Catalog(self.operations)
         self.tools = build_tools(self.operations)
@@ -71,7 +95,13 @@ class AgentApiClient:
                 f"tool '{tool_name}' requires authentication the current session "
                 f"cannot provide (schemes: {tool.get('auth_schemes')})"
             )
-        return build_request(tool, args, self.base_url, self.session.auth_headers())
+        return build_request(
+            tool,
+            args,
+            self.base_url,
+            self.session.auth_headers(),
+            allowed_auth_hosts=self._auth_allowed_hosts,
+        )
 
     def call(
         self, tool_name: str, args: dict[str, Any], mode: str = "recorded"

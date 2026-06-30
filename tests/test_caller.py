@@ -46,3 +46,52 @@ def test_missing_path_param_is_caught():
     tool = _tool("/api/odds/snapshot/{fixtureId}")
     with pytest.raises(CallError):
         build_request(tool, {}, base_url="https://txline.txodds.com")
+
+
+# FIX 2 — caller validates declared required fields (top-level + one level into body),
+# not just path params, so a malformed call is caught instead of fired.
+def _charge_tool() -> dict:
+    return {
+        "name": "create_charge",
+        "description": "Create a charge.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "account": {"type": "string"},
+                "body": {
+                    "type": "object",
+                    "properties": {
+                        "correlationID": {"type": "string"},
+                        "value": {"type": "integer"},
+                    },
+                    "required": ["correlationID", "value"],
+                },
+            },
+            "required": ["account", "body"],
+        },
+        "_invoke": {
+            "method": "POST",
+            "path": "/api/v1/charge",
+            "param_locations": {"account": "query"},
+        },
+    }
+
+
+def test_missing_required_top_level_and_body_fields_caught():
+    with pytest.raises(CallError) as ei:
+        build_request(_charge_tool(), {"body": {}}, base_url="https://api.example.test")
+    msg = str(ei.value)
+    assert "account" in msg
+    assert "correlationID" in msg
+    assert "value" in msg
+
+
+def test_required_fields_present_builds_fine():
+    req = build_request(
+        _charge_tool(),
+        {"account": "acct_1", "body": {"correlationID": "c1", "value": 100}},
+        base_url="https://api.example.test",
+    )
+    assert req.method == "POST"
+    assert "account=acct_1" in req.url
+    assert req.json_body == {"correlationID": "c1", "value": 100}
