@@ -9,6 +9,7 @@ dependencies = ["pyyaml>=6.0"]
 # entry only parses args + formats output (real logic lives in the package).
 [project.scripts]
 gecko = "gecko.serve:_run"
+gecko-testgen = "gecko.testgen:_run"
 
 [project.optional-dependencies]
 serve = [
