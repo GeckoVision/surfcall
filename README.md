@@ -242,8 +242,9 @@ conventions.
 
 ## License
 
-`LICENSE` not yet checked in — open-source vs proprietary is an open decision. Treat
-licensing as **repository-owner default** until the file lands.
+**Apache License 2.0** — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). Apache-2.0 carries
+an explicit patent grant. The engine is open (the distribution funnel); the correctness corpus
+and hosted layer stay private (open-core).
 
 ---
 
