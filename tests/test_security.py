@@ -4,7 +4,7 @@ auth-gated op its session can't satisfy. Uses a tiny synthetic spec for control.
 import pytest
 
 from gecko.access import NoAuthSession, Session, public_session
-from gecko.caller import CallError
+from gecko.caller import CallError, build_request
 from gecko.client import AgentApiClient
 from gecko.ingest import extract_operations
 from gecko.tools import to_tool
@@ -100,3 +100,49 @@ def test_prepare_public_tool_without_auth_ok():
     req = client.prepare("get_public", {})
     assert req.url.endswith("/public")
     assert req.headers == {}
+
+
+# FIX 3 — token-exfil guard. base_url derives from untrusted servers[].url; a poisoned
+# URL must not carry the customer's injected auth to an attacker host. The error must
+# name only the offending host, never the secret.
+def _bare_tool() -> dict:
+    return {
+        "name": "t",
+        "inputSchema": {"type": "object", "properties": {}},
+        "_invoke": {"method": "GET", "path": "/data", "param_locations": {}},
+    }
+
+
+def test_build_request_refuses_auth_toward_unexpected_host():
+    with pytest.raises(CallError) as ei:
+        build_request(
+            _bare_tool(),
+            {},
+            base_url="https://evil.attacker.test",
+            auth={"Authorization": "SECRETTOKEN"},
+            allowed_auth_hosts={"api.woovi.com"},
+        )
+    msg = str(ei.value)
+    assert "evil.attacker.test" in msg
+    assert "SECRETTOKEN" not in msg  # the secret must never leak into the error
+
+
+def test_build_request_injects_auth_toward_allowed_host():
+    req = build_request(
+        _bare_tool(),
+        {},
+        base_url="https://api.woovi.com",
+        auth={"Authorization": "SECRETTOKEN"},
+        allowed_auth_hosts={"api.woovi.com"},
+    )
+    assert req.headers["Authorization"] == "SECRETTOKEN"
+
+
+def test_client_pins_auth_host_when_base_url_explicit():
+    # Explicit base_url pins the allowlist to that one host (the protected mode).
+    client = AgentApiClient(
+        SPEC, base_url="https://example.test", session=Session(jwt="J", api_token="T")
+    )
+    assert client._auth_allowed_hosts == {"example.test"}
+    req = client.prepare("get_private", {})
+    assert req.headers["Authorization"].startswith("Bearer ")

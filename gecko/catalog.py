@@ -12,6 +12,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from .ingest import Operation
+from .tools import tool_name
 
 _WORD = re.compile(r"[a-z0-9]+")
 
@@ -26,7 +27,8 @@ class CatalogEntry:
 
     @property
     def tool_name(self) -> str:
-        return self.operation.operation_id
+        # Must match to_tool()["name"] exactly — client.search filters on it.
+        return tool_name(self.operation)
 
     @property
     def _haystack(self) -> str:

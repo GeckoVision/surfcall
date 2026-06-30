@@ -77,6 +77,16 @@ def _safe_name(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]", "_", name)[:64]
 
 
+def tool_name(op: Operation) -> str:
+    """The single source of truth for an op's agent-facing tool name.
+
+    Both ``to_tool`` (the tool def) and the catalog must agree on this, or
+    ``client.search`` — which filters hits against sanitized tool names — drops
+    every result for specs whose operationId is synthesized/contains odd chars.
+    """
+    return _safe_name(op.operation_id)
+
+
 def _security_requires_auth(op: Operation) -> bool:
     """True only if *every* way to call this op needs auth.
 
@@ -102,7 +112,7 @@ def _auth_schemes(op: Operation) -> list[str]:
 
 def to_tool(op: Operation) -> dict[str, Any]:
     return {
-        "name": _safe_name(op.operation_id),
+        "name": tool_name(op),
         "description": question_description(op),
         "inputSchema": _input_schema(op),
         # Comprehension metadata: whether this op is auth-gated and which schemes.
