@@ -87,8 +87,13 @@ class AgentApiClient:
         # schema/description) OR the RESPONSE side: recorded mode ($0, the default) echoes
         # the success-response schema's example/default/enum straight to the agent, so a
         # poisoned response schema is an agent-facing channel request-only defenses miss.
+        # Response-schema poison quarantines too, but its values do NOT route into a
+        # request arg, so scan it with route_to_arg=False: address SHAPES (a benign
+        # base58 pubkey in a response example) don't false-quarantine, while real secrets
+        # and injected instructions still do.
         poisoned = any(t.get("x-poison-flag") for t in self.tools) or any(
-            sanitize_schema(self._success_schema(op))[1] for op in self.operations
+            sanitize_schema(self._success_schema(op), route_to_arg=False)[1]
+            for op in self.operations
         )
         quarantined = spec_is_quarantined(self.spec) or poisoned
         if poisoned:
@@ -225,7 +230,9 @@ class AgentApiClient:
         # Scrub the response schema before synthesizing agent-visible data: drop any
         # secret-looking or instruction-shaped example/default/enum so a poisoned response
         # schema can't surface a prompt-injection string / attacker address / leaked key.
-        clean, _ = sanitize_schema(schema)
+        # route_to_arg=False: a response value isn't a tool arg, so address shapes aren't
+        # dropped here (a benign pubkey in a response example is legitimate output).
+        clean, _ = sanitize_schema(schema, route_to_arg=False)
         self._capture(tool_name, 200, None, args, None, effective)
         return {
             "status": 200,

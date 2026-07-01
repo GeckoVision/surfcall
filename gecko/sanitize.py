@@ -100,6 +100,19 @@ _SECRET_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
+# Crypto-address SHAPES an arg-filler could route funds/assets to. Deliberately SEPARATE
+# from looks_like_secret_value — a mint/pubkey is not a secret (a fixture example may be
+# one), so these are applied ONLY to REQUEST-side value channels (``route_to_arg``). A
+# benign address in a RESPONSE example therefore never trips a false quarantine.
+_ADDRESS_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b0x[a-fA-F0-9]{40}\b"),  # EVM 20-byte address
+    re.compile(
+        r"\b[1-9A-HJ-NP-Za-km-z]{26,64}\b"
+    ),  # base58 (BTC legacy / Solana pubkey)
+    re.compile(r"\b(?:bc1|tb1|bcrt1)[ac-hj-np-z02-9]{8,}\b"),  # bech32 segwit
+)
+
+
 def _fold(text: str) -> str:
     """Canonicalize text before regex matching so invisible/compatibility variants can't
     slip a trigger past the raw-byte rules.
@@ -173,10 +186,23 @@ _PROP_MAP_KEYS = frozenset({"properties", "patternProperties"})
 _MAX_DEPTH = 8
 
 
-def _value_is_dangerous(value: Any) -> bool:
+def looks_like_address_value(value: Any) -> bool:
+    """True if a value looks like a crypto address (EVM / base58 / bech32). Kept distinct
+    from ``looks_like_secret_value`` because an address is not a secret — used only for
+    REQUEST-side value channels that route into a real arg."""
+    if not isinstance(value, str):
+        return False
+    folded = _fold(value)
+    return any(pat.search(folded) for pat in _ADDRESS_VALUE_PATTERNS)
+
+
+def _value_is_dangerous(value: Any, route_to_arg: bool = True) -> bool:
     """True if a spec-provided value channel (const/default/example/enum member) must be
-    DROPPED: it looks like a real secret, or is itself an injected instruction."""
+    DROPPED: it looks like a real secret, an injected instruction, or — on the REQUEST
+    side only — a crypto address that would route funds/assets into a real tool arg."""
     if looks_like_secret_value(value):
+        return True
+    if route_to_arg and looks_like_address_value(value):
         return True
     return isinstance(value, str) and bool(scan_text(value))
 
@@ -186,7 +212,9 @@ def _cap_value(value: Any) -> Any:
     return value
 
 
-def sanitize_schema(schema: Any, _depth: int = 0) -> tuple[Any, bool]:
+def sanitize_schema(
+    schema: Any, _depth: int = 0, *, route_to_arg: bool = True
+) -> tuple[Any, bool]:
     """Recursively sanitize a JSON-Schema fragment used as a tool input.
 
     Neutralizes every attacker-controlled, agent-read channel in a schema node:
@@ -220,14 +248,14 @@ def sanitize_schema(schema: Any, _depth: int = 0) -> tuple[Any, bool]:
             out[key] = cleaned
             poisoned = poisoned or flagged
         elif key in _VALUE_KEYS:
-            if _value_is_dangerous(value):
+            if _value_is_dangerous(value, route_to_arg):
                 poisoned = True  # drop it entirely — never carry it into an arg
                 continue
             out[key] = _cap_value(value)
         elif key in _VALUE_LIST_KEYS and isinstance(value, list):
             # Drop any value that is a secret/address OR an injected instruction — such a
             # member still reaches the agent as a *suggested/mandated value* even if flagged.
-            kept = [v for v in value if not _value_is_dangerous(v)]
+            kept = [v for v in value if not _value_is_dangerous(v, route_to_arg)]
             if len(kept) != len(value):
                 poisoned = True
             out[key] = [_cap_value(v) for v in kept]
@@ -240,7 +268,9 @@ def sanitize_schema(schema: Any, _depth: int = 0) -> tuple[Any, bool]:
                 if key_is_dangerous(pname):
                     poisoned = True
                     continue
-                cleaned, flagged = sanitize_schema(pschema, _depth + 1)
+                cleaned, flagged = sanitize_schema(
+                    pschema, _depth + 1, route_to_arg=route_to_arg
+                )
                 new_props[pname] = cleaned
                 poisoned = poisoned or flagged
             out[key] = new_props
@@ -251,7 +281,9 @@ def sanitize_schema(schema: Any, _depth: int = 0) -> tuple[Any, bool]:
             # Recursing it uniformly means no future applicator can smuggle poison past an
             # allowlist. A non-schema dict (e.g. discriminator.mapping) is still walked, so
             # its string leaves hit the leaf catch-all below.
-            cleaned, flagged = sanitize_schema(value, _depth + 1)
+            cleaned, flagged = sanitize_schema(
+                value, _depth + 1, route_to_arg=route_to_arg
+            )
             out[key] = cleaned
             poisoned = poisoned or flagged
         elif isinstance(value, list):
@@ -260,17 +292,23 @@ def sanitize_schema(schema: Any, _depth: int = 0) -> tuple[Any, bool]:
             new_list = []
             for sub in value:
                 if isinstance(sub, dict):
-                    cleaned, flagged = sanitize_schema(sub, _depth + 1)
+                    cleaned, flagged = sanitize_schema(
+                        sub, _depth + 1, route_to_arg=route_to_arg
+                    )
                     new_list.append(cleaned)
                     poisoned = poisoned or flagged
                 else:
                     new_list.append(sub)
             out[key] = new_list
         elif isinstance(value, str):
-            # Catch-all for every remaining string leaf (unknown key, x-* extension,
-            # stray $ref): redact + flag if it carries an injected instruction. Non-string
+            # Catch-all for every remaining string leaf (unknown key, x-* extension, stray
+            # $ref/$anchor): redact + flag if it carries an injected instruction OR a bare
+            # secret (H9 — a lone ``sk-…`` in an x-* leaf is not instruction-shaped, so
+            # scan_text alone misses it). Address shapes are deliberately NOT checked here:
+            # a $ref path / operationId is often base58-alphabet, so that would false-
+            # positive; addresses are only dangerous in the value channels above. Non-string
             # leaves (numbers, bools, type keywords) are structural and pass through.
-            if scan_text(value):
+            if scan_text(value) or looks_like_secret_value(value):
                 out[key] = _REDACTION
                 poisoned = True
             else:
