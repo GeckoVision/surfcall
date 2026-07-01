@@ -1,0 +1,646 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Surfpool RPC + cheatcodes (drafted from docs/source)",
+    "version": "0.1.0",
+    "description": "Gecko's comprehension surface for Surfpool (https://surfpool.run), the drop-in solana-test-validator replacement by Txtx (Apache-2.0). Surfpool speaks Solana JSON-RPC on http://localhost:8899 and adds a `surfnet_*` cheatcode family for deterministic state manipulation.\n\nNO OpenAPI ships for Surfpool: this spec is the docs->draft-OpenAPI on-ramp. Method names and parameters were sourced from the cheatcodes RPC trait in solana-foundation/surfpool (crates/core/src/rpc/surfnet_cheatcodes.rs) and the typed params in crates/types/src/types.rs + crates/core/src/types.rs, cross-checked against https://docs.surfpool.run/rpc/cheatcodes.\n\nHONESTY / JSON-RPC<->OpenAPI MISMATCH: Surfpool is JSON-RPC, not REST. Every call is really a POST to ONE endpoint (`/`) whose body is the envelope {jsonrpc:\"2.0\", id, method, params}. OpenAPI requires a unique (path, method) per operation, so each RPC method is surfaced here as its OWN question-shaped operation: operationId = the exact JSON-RPC method, path = a virtual `/{method}` route, requestBody = that method's params by name. The true wire endpoint and method are carried in `x-jsonrpc-endpoint` / `x-jsonrpc-method` on each operation. A LIVE caller wraps the requestBody under `params` in the envelope and POSTs to `x-jsonrpc-endpoint`; this recorded/comprehension demo surfaces each method directly so an agent can find and shape the call correctly first try. Local validator = no auth.",
+    "x-source": [
+      "https://docs.surfpool.run/rpc/cheatcodes",
+      "https://github.com/solana-foundation/surfpool/blob/main/crates/core/src/rpc/surfnet_cheatcodes.rs",
+      "https://github.com/solana-foundation/surfpool/blob/main/crates/types/src/types.rs",
+      "https://github.com/solana-foundation/surfpool/blob/main/crates/core/src/types.rs"
+    ]
+  },
+  "x-jsonrpc": {
+    "version": "2.0",
+    "endpoint": "/",
+    "envelope": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "method": "<operation x-jsonrpc-method>",
+      "params": "<requestBody, by-name or positional>"
+    },
+    "note": "Virtual `/{method}` paths exist only so OpenAPI can give each JSON-RPC method its own operation. Live transport collapses them all to POST `/` with the method in the envelope."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8899",
+      "description": "Default Surfpool RPC (local validator). No auth."
+    }
+  ],
+  "paths": {
+    "/surfnet_setAccount": {
+      "post": {
+        "operationId": "surfnet_setAccount",
+        "summary": "Set an account's lamports balance, data, and owner directly (cheatcode).",
+        "description": "Cheatcode: overwrite an account's fields in the local validator without a real transaction. JSON-RPC method `surfnet_setAccount`, params [pubkey, update].",
+        "tags": ["cheatcodes"],
+        "x-jsonrpc-method": "surfnet_setAccount",
+        "x-jsonrpc-endpoint": "/",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["pubkey", "update"],
+                "properties": {
+                  "pubkey": {
+                    "type": "string",
+                    "description": "Base-58 public key of the account to set."
+                  },
+                  "update": { "$ref": "#/components/schemas/AccountUpdate" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Account updated.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RpcResponseEmpty" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/surfnet_setTokenAccount": {
+      "post": {
+        "operationId": "surfnet_setTokenAccount",
+        "summary": "Set or overwrite an SPL token account's amount, delegate, and state (cheatcode).",
+        "description": "Cheatcode: create/patch a token account for (owner, mint). JSON-RPC method `surfnet_setTokenAccount`, params [owner, mint, update, tokenProgram?].",
+        "tags": ["cheatcodes"],
+        "x-jsonrpc-method": "surfnet_setTokenAccount",
+        "x-jsonrpc-endpoint": "/",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["owner", "mint", "update"],
+                "properties": {
+                  "owner": {
+                    "type": "string",
+                    "description": "Base-58 public key of the token account owner."
+                  },
+                  "mint": {
+                    "type": "string",
+                    "description": "Base-58 public key of the token mint."
+                  },
+                  "update": { "$ref": "#/components/schemas/TokenAccountUpdate" },
+                  "tokenProgram": {
+                    "type": "string",
+                    "description": "Optional base-58 token program address (defaults to the SPL Token program)."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Token account updated.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RpcResponseEmpty" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/surfnet_setSupply": {
+      "post": {
+        "operationId": "surfnet_setSupply",
+        "summary": "Override the values returned by getSupply (total, circulating) on the local validator (cheatcode).",
+        "description": "Cheatcode: configure what `getSupply` reports. JSON-RPC method `surfnet_setSupply`, params [update].",
+        "tags": ["cheatcodes"],
+        "x-jsonrpc-method": "surfnet_setSupply",
+        "x-jsonrpc-endpoint": "/",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["update"],
+                "properties": {
+                  "update": { "$ref": "#/components/schemas/SupplyUpdate" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Supply updated.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RpcResponseEmpty" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/surfnet_timeTravel": {
+      "post": {
+        "operationId": "surfnet_timeTravel",
+        "summary": "Jump the local validator clock to an absolute slot, epoch, or timestamp (cheatcode).",
+        "description": "Cheatcode: move time forward to test epoch/slot-dependent logic. JSON-RPC method `surfnet_timeTravel`, params [config?]. With no config it advances ~1 hour.",
+        "tags": ["cheatcodes"],
+        "x-jsonrpc-method": "surfnet_timeTravel",
+        "x-jsonrpc-endpoint": "/",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TimeTravelConfig" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "New epoch/slot state after the jump.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EpochInfo" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/surfnet_pauseClock": {
+      "post": {
+        "operationId": "surfnet_pauseClock",
+        "summary": "Freeze the local validator clock so time stops advancing (cheatcode).",
+        "description": "Cheatcode: halt clock progression until resumed. JSON-RPC method `surfnet_pauseClock`, no params.",
+        "tags": ["cheatcodes"],
+        "x-jsonrpc-method": "surfnet_pauseClock",
+        "x-jsonrpc-endpoint": "/",
+        "responses": {
+          "200": {
+            "description": "Clock state at the moment of pause.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EpochInfo" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/surfnet_resumeClock": {
+      "post": {
+        "operationId": "surfnet_resumeClock",
+        "summary": "Resume the local validator clock after a pause (cheatcode).",
+        "description": "Cheatcode: restart clock progression. JSON-RPC method `surfnet_resumeClock`, no params.",
+        "tags": ["cheatcodes"],
+        "x-jsonrpc-method": "surfnet_resumeClock",
+        "x-jsonrpc-endpoint": "/",
+        "responses": {
+          "200": {
+            "description": "Clock state after resuming.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EpochInfo" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/surfnet_cloneProgramAccount": {
+      "post": {
+        "operationId": "surfnet_cloneProgramAccount",
+        "summary": "Clone a deployed program account from one program id to another (cheatcode).",
+        "description": "Cheatcode: copy a program's account state to a new address. JSON-RPC method `surfnet_cloneProgramAccount`, params [sourceProgramId, destinationProgramId].",
+        "tags": ["cheatcodes"],
+        "x-jsonrpc-method": "surfnet_cloneProgramAccount",
+        "x-jsonrpc-endpoint": "/",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["sourceProgramId", "destinationProgramId"],
+                "properties": {
+                  "sourceProgramId": {
+                    "type": "string",
+                    "description": "Base-58 public key of the program to clone from."
+                  },
+                  "destinationProgramId": {
+                    "type": "string",
+                    "description": "Base-58 public key of the program to clone into."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Program cloned.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RpcResponseEmpty" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/surfnet_setProgramAuthority": {
+      "post": {
+        "operationId": "surfnet_setProgramAuthority",
+        "summary": "Patch the upgrade authority of a program's ProgramData account (cheatcode).",
+        "description": "Cheatcode: set or clear a program's upgrade authority. JSON-RPC method `surfnet_setProgramAuthority`, params [programId, newAuthority?]. Omitting newAuthority makes the program immutable.",
+        "tags": ["cheatcodes"],
+        "x-jsonrpc-method": "surfnet_setProgramAuthority",
+        "x-jsonrpc-endpoint": "/",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["programId"],
+                "properties": {
+                  "programId": {
+                    "type": "string",
+                    "description": "Base-58 public key of the program."
+                  },
+                  "newAuthority": {
+                    "type": "string",
+                    "description": "Optional base-58 public key of the new upgrade authority. Omit to remove the authority."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authority updated.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RpcResponseEmpty" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/surfnet_resetAccount": {
+      "post": {
+        "operationId": "surfnet_resetAccount",
+        "summary": "Reset an account to its on-chain (forked mainnet) state, discarding local edits (cheatcode).",
+        "description": "Cheatcode: undo local mutations to an account. JSON-RPC method `surfnet_resetAccount`, params [pubkey].",
+        "tags": ["cheatcodes"],
+        "x-jsonrpc-method": "surfnet_resetAccount",
+        "x-jsonrpc-endpoint": "/",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["pubkey"],
+                "properties": {
+                  "pubkey": {
+                    "type": "string",
+                    "description": "Base-58 public key of the account to reset."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Account reset.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RpcResponseEmpty" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/requestAirdrop": {
+      "post": {
+        "operationId": "requestAirdrop",
+        "summary": "Airdrop SOL lamports to a wallet from the local faucet (standard Solana RPC).",
+        "description": "Standard Solana RPC: fund a wallet with lamports. JSON-RPC method `requestAirdrop`, params [pubkey, lamports, config?]. Returns the funding transaction signature.",
+        "tags": ["standard-rpc"],
+        "x-jsonrpc-method": "requestAirdrop",
+        "x-jsonrpc-endpoint": "/",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["pubkey", "lamports"],
+                "properties": {
+                  "pubkey": {
+                    "type": "string",
+                    "description": "Base-58 public key of the wallet to fund."
+                  },
+                  "lamports": {
+                    "type": "integer",
+                    "description": "Amount to airdrop, in lamports (1 SOL = 1_000_000_000 lamports)."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Funding transaction signature.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "description": "Base-58 transaction signature of the airdrop.",
+                  "example": "5j7s6NiJS3JAkvgkoc18WVAsiSaci2pxB2A6ueCJP4tprA2TFg9wSyTLeYouxPBJEMzJinENTkpA52YStRW5Dia"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/getBalance": {
+      "post": {
+        "operationId": "getBalance",
+        "summary": "Get the lamports balance of an account (standard Solana RPC read).",
+        "description": "Standard Solana RPC: read an account's lamports. JSON-RPC method `getBalance`, params [pubkey, config?].",
+        "tags": ["standard-rpc"],
+        "x-jsonrpc-method": "getBalance",
+        "x-jsonrpc-endpoint": "/",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["pubkey"],
+                "properties": {
+                  "pubkey": {
+                    "type": "string",
+                    "description": "Base-58 public key of the account to query."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Balance in lamports, wrapped in the RPC context envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "context": { "$ref": "#/components/schemas/RpcContext" },
+                    "value": {
+                      "type": "integer",
+                      "description": "Account balance in lamports.",
+                      "example": 1000000000
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/getSlot": {
+      "post": {
+        "operationId": "getSlot",
+        "summary": "Get the slot the local validator has reached (standard Solana RPC read).",
+        "description": "Standard Solana RPC: current slot height. JSON-RPC method `getSlot`, params [config?].",
+        "tags": ["standard-rpc"],
+        "x-jsonrpc-method": "getSlot",
+        "x-jsonrpc-endpoint": "/",
+        "responses": {
+          "200": {
+            "description": "Current slot number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "integer",
+                  "description": "Current slot.",
+                  "example": 221184000
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/getAccountInfo": {
+      "post": {
+        "operationId": "getAccountInfo",
+        "summary": "Get full account info (lamports, owner, data) for a public key (standard Solana RPC read).",
+        "description": "Standard Solana RPC: read an account record. JSON-RPC method `getAccountInfo`, params [pubkey, config?].",
+        "tags": ["standard-rpc"],
+        "x-jsonrpc-method": "getAccountInfo",
+        "x-jsonrpc-endpoint": "/",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["pubkey"],
+                "properties": {
+                  "pubkey": {
+                    "type": "string",
+                    "description": "Base-58 public key of the account to query."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Account info wrapped in the RPC context envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "context": { "$ref": "#/components/schemas/RpcContext" },
+                    "value": { "$ref": "#/components/schemas/AccountInfo" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/getSupply": {
+      "post": {
+        "operationId": "getSupply",
+        "summary": "Get total and circulating SOL supply (standard Solana RPC read).",
+        "description": "Standard Solana RPC: read supply. JSON-RPC method `getSupply`, params [config?]. Pairs with the surfnet_setSupply cheatcode.",
+        "tags": ["standard-rpc"],
+        "x-jsonrpc-method": "getSupply",
+        "x-jsonrpc-endpoint": "/",
+        "responses": {
+          "200": {
+            "description": "Supply wrapped in the RPC context envelope.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "context": { "$ref": "#/components/schemas/RpcContext" },
+                    "value": { "$ref": "#/components/schemas/Supply" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AccountUpdate": {
+        "type": "object",
+        "description": "Fields to set on an account. All optional; only provided fields are changed. (Rust AccountUpdate; serde camelCase.)",
+        "properties": {
+          "lamports": { "type": "integer", "description": "New lamports balance." },
+          "data": { "type": "string", "description": "New account data (base-58 / byte string)." },
+          "owner": { "type": "string", "description": "Base-58 public key of the owning program." },
+          "executable": { "type": "boolean", "description": "Whether the account holds a loaded program (read-only)." },
+          "rentEpoch": { "type": "integer", "description": "Epoch at which the account next owes rent." }
+        }
+      },
+      "TokenAccountUpdate": {
+        "type": "object",
+        "description": "Fields to set on an SPL token account. All optional. (Rust TokenAccountUpdate; serde camelCase.)",
+        "properties": {
+          "amount": { "type": "integer", "description": "Token amount held in the account." },
+          "delegate": { "type": "string", "description": "Base-58 public key of the delegate." },
+          "state": { "type": "string", "description": "Token account state (e.g. \"initialized\")." },
+          "delegatedAmount": { "type": "integer", "description": "Amount authorized to the delegate." },
+          "closeAuthority": { "type": "string", "description": "Base-58 public key of the close authority." }
+        }
+      },
+      "SupplyUpdate": {
+        "type": "object",
+        "description": "Values getSupply should report. All optional. (Rust SupplyUpdate; serde camelCase.)",
+        "properties": {
+          "total": { "type": "integer", "description": "Total supply in lamports." },
+          "circulating": { "type": "integer", "description": "Circulating supply in lamports." },
+          "nonCirculating": { "type": "integer", "description": "Non-circulating supply in lamports." },
+          "nonCirculatingAccounts": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Base-58 public keys counted as non-circulating."
+          }
+        }
+      },
+      "TimeTravelConfig": {
+        "description": "How to move the clock. Exactly one variant. (Rust TimeTravelConfig untagged enum; serde camelCase.)",
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["absoluteSlot"],
+            "properties": { "absoluteSlot": { "type": "integer", "description": "Jump to this absolute slot." } }
+          },
+          {
+            "type": "object",
+            "required": ["absoluteEpoch"],
+            "properties": { "absoluteEpoch": { "type": "integer", "description": "Jump to this absolute epoch." } }
+          },
+          {
+            "type": "object",
+            "required": ["absoluteTimestamp"],
+            "properties": { "absoluteTimestamp": { "type": "integer", "description": "Jump to this absolute UNIX-ms timestamp." } }
+          }
+        ]
+      },
+      "RpcContext": {
+        "type": "object",
+        "properties": {
+          "slot": { "type": "integer", "example": 355684457 },
+          "apiVersion": { "type": "string", "example": "2.2.2" }
+        }
+      },
+      "RpcResponseEmpty": {
+        "type": "object",
+        "description": "Standard RpcResponse<()> — a context plus a null value, returned by state-mutating cheatcodes.",
+        "properties": {
+          "context": { "$ref": "#/components/schemas/RpcContext" },
+          "value": { "type": "null", "description": "No payload; the mutation succeeded." }
+        },
+        "example": { "context": { "slot": 355684457, "apiVersion": "2.2.2" }, "value": null }
+      },
+      "EpochInfo": {
+        "type": "object",
+        "description": "Clock/epoch snapshot returned by time cheatcodes.",
+        "properties": {
+          "epoch": { "type": "integer" },
+          "slotIndex": { "type": "integer" },
+          "slotsInEpoch": { "type": "integer" },
+          "absoluteSlot": { "type": "integer" },
+          "blockHeight": { "type": "integer" },
+          "transactionCount": { "type": "integer" }
+        },
+        "example": {
+          "epoch": 512,
+          "slotIndex": 0,
+          "slotsInEpoch": 432000,
+          "absoluteSlot": 221184000,
+          "blockHeight": 650000000,
+          "transactionCount": 923472834
+        }
+      },
+      "AccountInfo": {
+        "type": "object",
+        "properties": {
+          "lamports": { "type": "integer", "example": 1000000000 },
+          "owner": { "type": "string", "example": "11111111111111111111111111111111" },
+          "executable": { "type": "boolean", "example": false },
+          "rentEpoch": { "type": "integer", "example": 18446744073709551615 },
+          "data": {
+            "type": "array",
+            "items": { "type": "string" },
+            "example": ["", "base64"]
+          }
+        }
+      },
+      "Supply": {
+        "type": "object",
+        "properties": {
+          "total": { "type": "integer", "example": 588000000000000000 },
+          "circulating": { "type": "integer", "example": 488000000000000000 },
+          "nonCirculating": { "type": "integer", "example": 100000000000000000 },
+          "nonCirculatingAccounts": {
+            "type": "array",
+            "items": { "type": "string" },
+            "example": []
+          }
+        }
+      }
+    }
+  }
+}
