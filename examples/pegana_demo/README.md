@@ -7,9 +7,9 @@ instead of it.** Aggregate, don't replace.
 Pegana is *the peg-risk oracle for Solana*: 63 pegged assets tracked through a
 `PEGGED → … → BLACK_SWAN` state machine. Its team already
 did the right thing and shipped an MCP — but by hand, so it exposes only the ~6
-tools they had time to wrap. The other 35 operations of their REST surface — the
-by-mint state lookup, discount history, methodology version, delivery-health
-stats — are invisible to an agent unless someone writes integration code.
+tools they had time to wrap. The rest of their REST surface — the by-mint state
+lookup, discount history, methodology version, delivery-health stats — is
+invisible to an agent unless someone writes integration code.
 
 Gecko is that layer, without the code. Point it at Pegana's OpenAPI and the
 **unmodified engine** turns the whole surface into question-shaped, first-call-
