@@ -28,10 +28,11 @@ jobs:
             asset: gecko-linux-x86_64
           - runner: ubuntu-22.04-arm   # linux arm64 — older glibc (2.35); GitHub-hosted Arm
             asset: gecko-linux-arm64
-          - runner: macos-13           # darwin x86_64 (Intel)
-            asset: gecko-darwin-x86_64
           - runner: macos-14           # darwin arm64 (Apple Silicon)
             asset: gecko-darwin-arm64
+          # NOTE: Intel-macOS (macos-13, gecko-darwin-x86_64) dropped — GitHub is
+          # sunsetting Intel runners; the job queues indefinitely. Intel-Mac users
+          # are covered by install.sh's uv fallback. Re-add if a reliable runner returns.
     steps:
       - uses: actions/checkout@v4
 
