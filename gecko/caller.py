@@ -98,22 +98,28 @@ def build_request(
     if query:
         url = f"{url}?{urlencode(query, doseq=True)}"
 
-    # Token-exfil guard: base_url derives from the spec's (untrusted) servers[].url. If
-    # we have a secret to inject and the caller pinned an allowlist, refuse to send it to
-    # any host not on that list. The message names ONLY the host — never the auth value.
-    #
-    # RESIDUAL: with no explicit base_url the client trusts the spec and its allowlist is
-    # just the spec's own server hosts, so a wholly-poisoned servers[] still matches
-    # itself. This protects the pinned (explicit-base_url) mode and any future per-op
-    # server override / url drift; full trusted-host pinning is a surface-level follow-up.
+    # Token-exfil guard. ``allowed_auth_hosts`` is the OUT-OF-BAND trust anchor computed
+    # by the client (surfaces.anchor_for) — NEVER the spec's own servers[]. Fail closed:
+    #   * anchor is a non-empty set and the target host is NOT in it -> a pinned surface
+    #     whose base_url drifted (poisoned servers[]): refuse loudly. The message names
+    #     ONLY the host — never the auth value.
+    #   * anchor is an empty set -> no pinned host (quarantined/unverified surface):
+    #     never send the secret, but do NOT hard-fail — proceed in no-auth mode so the
+    #     agent can still make un-drifted, public calls.
+    #   * anchor is None -> caller vouches (low-level/unit use): inject as given.
     if auth:
+        inject = True
         if allowed_auth_hosts is not None:
-            host = (urlsplit(url).hostname or "").lower()
-            if host not in allowed_auth_hosts:
-                raise CallError(
-                    f"refusing to inject auth toward unexpected host: {host}"
-                )
-        headers.update(auth)
+            if not allowed_auth_hosts:
+                inject = False  # no trusted host: fail closed, degrade to no-auth
+            else:
+                host = (urlsplit(url).hostname or "").lower()
+                if host not in allowed_auth_hosts:
+                    raise CallError(
+                        f"refusing to inject auth toward unexpected host: {host}"
+                    )
+        if inject:
+            headers.update(auth)
 
     return PreparedRequest(
         method=invoke["method"],

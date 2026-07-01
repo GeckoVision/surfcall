@@ -202,7 +202,9 @@ def test_corpus_capture_records_outcome_when_enabled(tmp_path):
     assert rec["operation_id"] == "state"
     assert rec["status"] == 200 and rec["ok"] is True
     assert rec["first_call_correct"] is True
-    assert "{" in rec["path_template"]  # templated, not the filled /v1/assets/USDC/state
+    assert (
+        "{" in rec["path_template"]
+    )  # templated, not the filled /v1/assets/USDC/state
     assert "USDC" not in corpus.read_text()  # no param VALUE leaks
 
 

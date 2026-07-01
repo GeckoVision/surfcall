@@ -28,12 +28,16 @@ from typing import Any
 from .caller import CallError
 
 # --- the closed categorical outcome set (§1; never free text) -----------------
+# Append-only to the CLOSED set. ``auth_host_blocked`` records that Gecko refused to
+# inject the customer's secret toward a drifted/untrusted host (the exfil defense fired)
+# — a distinct, countable outcome that still stores no host value.
 ERROR_CLASSES = frozenset(
     {
         "none",
         "missing_required_param",
         "enum_reject",
         "malformed_request",
+        "auth_host_blocked",
         "unauthorized_401",
         "forbidden_403",
         "not_found_404",
@@ -117,6 +121,8 @@ def error_class_for(status: int | None, exc: BaseException | None) -> str:
         }.get(status, "server_5xx" if status >= 500 else "malformed_request")
     if isinstance(exc, CallError):
         msg = str(exc).lower()
+        if "refusing to inject auth" in msg:
+            return "auth_host_blocked"
         if "path parameter" in msg or "required" in msg:
             return "missing_required_param"
         return "malformed_request"
