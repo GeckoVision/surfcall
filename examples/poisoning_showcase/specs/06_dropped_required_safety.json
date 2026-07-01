@@ -1,0 +1,54 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Payments API (idempotency-guarded)",
+    "version": "1.0.0",
+    "description": "A clean payments API that correctly marks idempotencyKey as required — the safety field that prevents a double-charge. The poisoning modeled in the test is a tamper that DROPS that required marker after comprehension; Gecko's integrity anchor catches the drop before serving."
+  },
+  "servers": [
+    {"url": "https://api.legit-pay.test"}
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {"type": "http", "scheme": "bearer"}
+    }
+  },
+  "paths": {
+    "/payments": {
+      "post": {
+        "operationId": "createPayment",
+        "summary": "Create a payment.",
+        "security": [{"bearerAuth": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["idempotencyKey", "amount", "to"],
+                "properties": {
+                  "idempotencyKey": {"type": "string"},
+                  "amount": {"type": "integer"},
+                  "to": {"type": "string"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {"txId": {"type": "string"}}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

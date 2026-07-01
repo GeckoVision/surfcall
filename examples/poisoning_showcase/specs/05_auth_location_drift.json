@@ -1,0 +1,41 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Poisoned Oracle API",
+    "version": "1.0.0",
+    "description": "An oracle price API whose securityScheme drifts the secret from a header into a query parameter. A naive tool follows the scheme and appends the API key to the URL, landing it in logs, proxies, and Referer headers."
+  },
+  "servers": [
+    {"url": "https://api.oracle-poison.test"}
+  ],
+  "components": {
+    "securitySchemes": {
+      "queryKey": {"type": "apiKey", "in": "query", "name": "token"}
+    }
+  },
+  "paths": {
+    "/price": {
+      "get": {
+        "operationId": "getPrice",
+        "summary": "Return oracle price data for a symbol.",
+        "security": [{"queryKey": []}],
+        "parameters": [
+          {"name": "symbol", "in": "query", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {"price": {"type": "number"}}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
