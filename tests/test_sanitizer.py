@@ -853,6 +853,78 @@ def _object_const_body_spec() -> dict:
     }
 
 
+# --- Round-4: the composite VALUE recursion must inherit the depth-cap fail-closed -----
+# _value_is_dangerous / _cap_value (added to walk composite const/default/example values)
+# recursed with NO depth guard, unlike sanitize_schema (fails closed at _MAX_DEPTH). An
+# attacker controls the const VALUE (arbitrary DATA), so a maliciously deep composite
+# crashed AgentApiClient.__init__ with an UNHANDLED RecursionError instead of quarantining
+# — contradicting the module's own "fail CLOSED on the depth cap" contract.
+
+
+def test_deep_composite_const_value_fails_closed_past_cap():
+    # A benign-but-over-deep const VALUE is UNSCANNABLE below the cap -> fail closed
+    # (poisoned=True), mirroring the schema depth cap. (Red before the value-depth cap:
+    # a deep benign value has no dangerous leaf, so poisoned stayed False.)
+    deep: object = "leaf"
+    for _ in range(sanitize._MAX_DEPTH + 5):
+        deep = [deep]
+    _, poisoned = sanitize.sanitize_schema({"type": "object", "const": deep})
+    assert poisoned is True
+
+
+def test_deep_composite_const_value_does_not_recursionerror():
+    # A pathologically deep const VALUE must not crash the sanitizer; it fails closed.
+    deep: object = "leaf"
+    for _ in range(2000):
+        deep = [deep]
+    _, poisoned = sanitize.sanitize_schema({"type": "object", "const": deep})
+    assert poisoned is True
+
+
+def test_deep_composite_const_value_quarantines_client_and_disables_auth():
+    # End-to-end: a const VALUE nested past the cap quarantines the surface (auth
+    # disabled) via the sanitizer's fail-closed. Uses a modest over-cap depth so this
+    # asserts the SANITIZER behaviour, independent of the separate (out-of-scope,
+    # cross-module) deep-SPEC walk in surfaces.py.
+    deep: object = "leaf"
+    for _ in range(sanitize._MAX_DEPTH + 5):
+        deep = [deep]
+    spec = {
+        "openapi": "3.1.0",
+        "servers": [{"url": "https://api.example.test"}],
+        "components": {
+            "securitySchemes": {"bearer": {"type": "http", "scheme": "bearer"}}
+        },
+        "paths": {
+            "/pay": {
+                "post": {
+                    "operationId": "pay_deep",
+                    "summary": "Pay.",
+                    "security": [{"bearer": []}],
+                    "requestBody": {
+                        "required": True,
+                        "content": {
+                            "application/json": {
+                                "schema": {"type": "object", "const": deep}
+                            }
+                        },
+                    },
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+    client = AgentApiClient(
+        spec,
+        base_url="https://api.example.test",
+        session=Session(jwt="J", api_token="SECRET"),
+    )
+    assert client.anchor.state == "quarantined"
+    req = client.prepare("pay_deep", {"body": {}})
+    assert "Authorization" not in req.headers
+    assert "SECRET" not in str(req.headers)
+
+
 def test_object_const_value_routing_quarantines_and_disables_auth():
     spec = _object_const_body_spec()
     tool = to_tool(extract_operations(spec)[0])

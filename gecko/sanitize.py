@@ -316,7 +316,7 @@ def _leaf_is_dangerous(value: Any, *, check_address: bool) -> bool:
     return isinstance(value, str) and bool(scan_text(value))
 
 
-def _value_is_dangerous(value: Any, *, check_address: bool) -> bool:
+def _value_is_dangerous(value: Any, *, check_address: bool, _depth: int = 0) -> bool:
     """True if a spec-provided value channel carries a dangerous leaf ANYWHERE.
 
     A scalar is checked directly. An OBJECT or ARRAY value is walked recursively so no
@@ -325,30 +325,46 @@ def _value_is_dangerous(value: Any, *, check_address: bool) -> bool:
     ``{"recipient": "<attacker-addr>"}`` (the JSON-Schema-MANDATED value) would otherwise
     route the attacker recipient into a real arg with auth live (obj-const-mandated). A
     dangerous leaf at any depth → drop the whole value → poisoned → quarantine.
+
+    Fails CLOSED at ``_MAX_DEPTH`` exactly like ``sanitize_schema``: the const VALUE is
+    attacker-controlled DATA (not schema), so a maliciously deep composite would otherwise
+    recurse into a RecursionError that crashes client construction. A value nested below
+    the cap is UNSCANNABLE, so treat the whole value as dangerous (drop + quarantine)
+    rather than assume it clean. Legit const/default/example values are shallow (the
+    committed fixtures' request examples are ≤2 deep), so this never fires on them.
     """
+    if _depth > _MAX_DEPTH:
+        return True
     if isinstance(value, dict):
         return any(
             _leaf_is_dangerous(key, check_address=check_address)
-            or _value_is_dangerous(sub, check_address=check_address)
+            or _value_is_dangerous(sub, check_address=check_address, _depth=_depth + 1)
             for key, sub in value.items()
         )
     if isinstance(value, list):
         return any(
-            _value_is_dangerous(sub, check_address=check_address) for sub in value
+            _value_is_dangerous(sub, check_address=check_address, _depth=_depth + 1)
+            for sub in value
         )
     return _leaf_is_dangerous(value, check_address=check_address)
 
 
-def _cap_value(value: Any) -> Any:
+def _cap_value(value: Any, _depth: int = 0) -> Any:
     """Length-cap the string leaves of a value channel (H10), recursing into composite
     (object/array) values so a wall-of-text buried in an object/array const/default/
-    example/enum member is capped like a description/title. Non-string scalars pass through."""
+    example/enum member is capped like a description/title. Non-string scalars pass through.
+
+    Depth-guarded to match ``_value_is_dangerous``: a value only reaches here once it has
+    passed that scan (hence is within the cap), but never recurse unbounded — stop and
+    return the node as-is at the cap rather than risk a RecursionError."""
+    if _depth > _MAX_DEPTH:
+        return value
     if isinstance(value, str) and len(value) > MAX_TEXT_LEN:
         return value[:MAX_TEXT_LEN].rstrip() + "…"
     if isinstance(value, dict):
-        return {key: _cap_value(sub) for key, sub in value.items()}
+        return {key: _cap_value(sub, _depth + 1) for key, sub in value.items()}
     if isinstance(value, list):
-        return [_cap_value(sub) for sub in value]
+        return [_cap_value(sub, _depth + 1) for sub in value]
     return value
 
 
