@@ -490,6 +490,32 @@ def test_value_routing_under_applicator_quarantines_and_disables_auth():
     assert "SECRET" not in str(req.headers)
 
 
+# --- Fix #2: fail CLOSED on the depth cap (H8) ---------------------------------------
+# An attacker controls nesting depth. When recursion hits the cap the buried node is
+# UNSCANNED, so assuming it clean (poisoned=False) lets a deeply-buried const route into
+# an arg with auth live. Exceeding the cap must quarantine (poisoned=True).
+
+
+def _nest_items(levels: int, leaf: dict) -> dict:
+    node = leaf
+    for _ in range(levels):
+        node = {"type": "array", "items": node}
+    return node
+
+
+def test_depth_cap_fails_closed_on_deep_const():
+    schema = _nest_items(11, {"type": "string", "const": _HEX_ADDR_CONST})
+    _, poisoned = sanitize.sanitize_schema(schema)
+    assert poisoned is True  # buried beyond the cap => quarantine, never assumed clean
+
+
+def test_shallow_schema_within_cap_is_not_falsely_poisoned():
+    # Guard the other side: a clean schema comfortably within the cap must stay clean.
+    schema = _nest_items(4, {"type": "string"})
+    _, poisoned = sanitize.sanitize_schema(schema)
+    assert poisoned is False
+
+
 def test_secret_default_never_reaches_tool_arg_schema():
     spec = {
         "openapi": "3.1.0",

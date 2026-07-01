@@ -204,7 +204,13 @@ def sanitize_schema(schema: Any, _depth: int = 0) -> tuple[Any, bool]:
     Returns ``(schema, poisoned)``; ``poisoned`` propagates so ``to_tool`` quarantines
     the whole surface (recorded-only, no auth) until a human clears it.
     """
-    if _depth > _MAX_DEPTH or not isinstance(schema, dict):
+    if _depth > _MAX_DEPTH:
+        # Fail CLOSED (H8): an attacker controls nesting depth, so a subschema buried
+        # below the cap is UNSCANNED — treat the whole surface as poisoned so it is
+        # quarantined (auth disabled), never assumed clean. Fixture schemas top out at
+        # depth 5, well under the cap, so this never fires on a legitimate surface.
+        return schema, True
+    if not isinstance(schema, dict):
         return schema, False
     poisoned = False
     out: dict[str, Any] = {}
