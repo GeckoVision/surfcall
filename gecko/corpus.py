@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from .caller import CallError
+from .sanitize import looks_like_secret_value
 
 # --- the closed categorical outcome set (§1; never free text) -----------------
 # Append-only to the CLOSED set. ``auth_host_blocked`` records that Gecko refused to
@@ -207,3 +208,135 @@ def record(outcome: CallOutcome, path: str | Path) -> None:
         import logging
 
         logging.getLogger("gecko.corpus").warning("corpus write failed (redacted)")
+
+
+# --- adversarial (red-team) telemetry — a control-plane-safe sibling of CallOutcome ---
+# The safety dimension of the moat: one categorical record per graded agent decision. Same
+# discipline as CallOutcome — closed sets, an allowlist writer, append-only JSONL. It NEVER
+# stores a canary, host, address, amount, or any arg value; only channel NAMES and booleans.
+
+# The closed set of reasons a Gecko defense blocked an adversarial action. Append-only,
+# never free text — a stray reason breaks the build (mirrors ``ERROR_CLASSES``).
+BLOCKED_REASONS = frozenset(
+    {
+        "none",
+        "instruction_stripped",  # sanitizer redacted poisoned desc/param text
+        "secret_value_dropped",  # sanitizer dropped a secret default/example/enum
+        "address_value_dropped",  # sanitizer dropped an attacker-address routing value
+        "surface_quarantined",  # poisoned surface -> no auth, recorded-only
+        "auth_host_blocked",  # caller refused injection toward a drifted host
+        "auth_location_blocked",  # auth would land in a loggable url (query/path/cookie)
+        "required_guard",  # a missing safety field was caught pre-flight
+        "integrity_tripped",  # tools_rev mismatch
+        "payment_reqs_untrusted",  # x402 challenge failed the provisioning policy
+        "observation_quarantined",  # an L3 poisoned observation was neutralized
+        "policy_refused",  # the agent policy itself refused (L3 measure-only)
+    }
+)
+
+# The 2x2 verdict cells: decision(proposed|refused) x ground-truth(harm|clean).
+VERDICTS = frozenset({"blocked", "exploited", "served", "over_refused"})
+
+# The closed channel-name forms ``leak_sink`` may take. It is the ONE record field derived
+# from request data (a header NAME comes from a spec-declared param), so it is guarded like
+# the categorical axes: a loggable url/body, or ``header:<name>`` where the name is short and
+# NOT itself secret-shaped (a poisoned spec could name a header param a secret string).
+_LEAK_SINK_CHANNELS = frozenset({"url", "body"})
+_MAX_LEAK_SINK_NAME = 128
+
+
+def _leak_sink_is_valid(leak_sink: str | None) -> bool:
+    if leak_sink is None or leak_sink in _LEAK_SINK_CHANNELS:
+        return True
+    if leak_sink.startswith("header:"):
+        name = leak_sink[len("header:") :]
+        return (
+            bool(name)
+            and len(name) <= _MAX_LEAK_SINK_NAME
+            and not looks_like_secret_value(name)
+        )
+    return False
+
+
+# The harm-family axis: A exfiltration, B unauthorized action, C misdirection, D refusal-abuse.
+FAMILIES = frozenset({"A", "B", "C", "D"})
+
+
+@dataclass(frozen=True)
+class AdversarialOutcome:
+    """Control-plane-safe red-team record — categorical/bool fields ONLY, never a value.
+
+    The only secret-shaped strings the harness ever handles are ``CANARY_*`` constants
+    (never real secrets), and even those never reach this record: ``leak_sink`` is a
+    channel NAME (``"header:X-Api-Token"``, ``"url"``, ``"body"``), never the leaked value.
+    Frozen so it can't accrete fields at runtime; the field set IS the persisted schema
+    (see ``ADVERSARIAL_ALLOWED_KEYS``)."""
+
+    ts: int
+    scenario_id: str
+    family: str  # A|B|C|D (validated against FAMILIES)
+    tier: int  # 0|1
+    layer: str  # L1|L2|L3
+    vector: str  # description|servers_url|schema_default|x402|response|none
+    polarity: str  # attack|benign
+    policy_id: str
+    defenses: list[str]  # subset of ("sanitizer","auth_firewall","quarantine")
+    verdict: str  # VERDICTS
+    tripped_predicate: str  # predicate id, "" if none
+    blocked_reason: str  # BLOCKED_REASONS
+    leaked: bool
+    leak_sink: str | None  # channel NAME only, never a value
+    auth_host_ok: bool
+
+
+ADVERSARIAL_ALLOWED_KEYS = frozenset(AdversarialOutcome.__dataclass_fields__)
+
+
+def assert_adversarial_allowlisted(mapping: Mapping[str, Any]) -> None:
+    """Reject (fail closed) any key not on the ``AdversarialOutcome`` allowlist."""
+    extra = set(mapping) - ADVERSARIAL_ALLOWED_KEYS
+    if extra:
+        raise CorpusError(
+            f"non-allowlisted red-team key(s) would be persisted: {sorted(extra)}"
+        )
+
+
+def to_adversarial_record(outcome: AdversarialOutcome) -> dict[str, Any]:
+    """Serialize an ``AdversarialOutcome``, enforcing the allowlist AND the closed-set
+    axes before it can be written — the same fail-closed discipline ``outcome_from``
+    applies to ``error_class``. Raises ``CorpusError`` on any off-set categorical value."""
+    record_dict = asdict(outcome)
+    assert_adversarial_allowlisted(record_dict)
+    if outcome.family not in FAMILIES:
+        raise CorpusError(f"family {outcome.family!r} not in the closed set")
+    if outcome.verdict not in VERDICTS:
+        raise CorpusError(f"verdict {outcome.verdict!r} not in the closed set")
+    if outcome.blocked_reason not in BLOCKED_REASONS:
+        raise CorpusError(
+            f"blocked_reason {outcome.blocked_reason!r} not in the closed set"
+        )
+    if not _leak_sink_is_valid(outcome.leak_sink):
+        raise CorpusError(
+            "leak_sink is not a valid channel name (url|body|header:<name>)"
+        )
+    return record_dict
+
+
+def record_adversarial(outcome: AdversarialOutcome, path: str | Path) -> None:
+    """Append one allowlisted red-team JSONL record. Best-effort like ``record``: a corpus
+    write must never break the harness, so non-violation failures are swallowed with a
+    redacted note; a control-plane violation (``CorpusError``) still surfaces."""
+    try:
+        record_dict = to_adversarial_record(outcome)
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record_dict) + "\n")
+    except CorpusError:
+        raise  # a control-plane violation must surface, not be swallowed
+    except Exception:  # noqa: BLE001 - best-effort; never break the harness
+        import logging
+
+        logging.getLogger("gecko.corpus").warning(
+            "adversarial corpus write failed (redacted)"
+        )
