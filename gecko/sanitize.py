@@ -140,29 +140,40 @@ def sanitize_text(text: Any) -> tuple[Any, bool]:
 def sanitize_schema(schema: Any, _depth: int = 0) -> tuple[Any, bool]:
     """Recursively sanitize a JSON-Schema fragment used as a tool input.
 
-    Cleans ``description`` (instruction stripping + length cap) and drops any
-    ``default``/``example``/``enum`` entry that looks like a secret or trips a danger
-    rule — a poisoned default must never seed a tool arg. Returns ``(schema, poisoned)``.
+    Neutralizes every attacker-controlled, agent-read channel in a schema node:
+
+    * free text the LLM reads — ``description``/``title``/``$comment`` — is instruction
+      stripped + length capped;
+    * value channels the arg-filler emits — ``default``/``example``/``const`` — are
+      dropped if they look like a secret or trip a danger rule (``const`` is the value
+      JSON-Schema *mandates* the caller send, so a poisoned const routes into a real arg);
+    * value lists — ``enum``/``examples`` (the 3.1 / 2020-12 array form) — have any
+      secret-shaped or instruction-shaped member filtered out;
+    * any *other* string leaf (unknown key, ``x-*`` extension, stray ``$ref``) is
+      redacted if it trips a danger rule — closing the old passthrough ``else``.
+
+    Returns ``(schema, poisoned)``; ``poisoned`` propagates so ``to_tool`` quarantines
+    the whole surface (recorded-only, no auth) until a human clears it.
     """
     if _depth > 8 or not isinstance(schema, dict):
         return schema, False
     poisoned = False
     out: dict[str, Any] = {}
     for key, value in schema.items():
-        if key == "description":
+        if key in ("description", "title", "$comment"):
             cleaned, flagged = sanitize_text(value)
             out[key] = cleaned
             poisoned = poisoned or flagged
-        elif key in ("default", "example"):
+        elif key in ("default", "example", "const"):
             if looks_like_secret_value(value) or (
                 isinstance(value, str) and scan_text(value)
             ):
                 poisoned = True  # drop it entirely — never carry it into an arg
                 continue
             out[key] = value
-        elif key == "enum" and isinstance(value, list):
-            # Drop any enum value that is a secret OR an injected instruction — an
-            # instruction-shaped enum still reaches the agent as a *suggested value*.
+        elif key in ("enum", "examples") and isinstance(value, list):
+            # Drop any value that is a secret OR an injected instruction — such a member
+            # still reaches the agent as a *suggested/mandated value* even if flagged.
             kept = [
                 v
                 for v in value
@@ -196,6 +207,15 @@ def sanitize_schema(schema: Any, _depth: int = 0) -> tuple[Any, bool]:
                 new_list.append(cleaned)
                 poisoned = poisoned or flagged
             out[key] = new_list
+        elif isinstance(value, str):
+            # Catch-all for every remaining string leaf (unknown key, x-* extension,
+            # stray $ref): redact + flag if it carries an injected instruction. Non-string
+            # leaves (numbers, bools, type keywords) are structural and pass through.
+            if scan_text(value):
+                out[key] = _REDACTION
+                poisoned = True
+            else:
+                out[key] = value
         else:
             out[key] = value
     return out, poisoned
