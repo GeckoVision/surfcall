@@ -192,6 +192,81 @@ def test_replayed_payment_ref_is_idempotent():
     assert ents.get("cust_1", "pegana") is first
 
 
+class _CountingFacilitator:
+    """Spy over FakeFacilitator that counts settle() calls — proves no double-SETTLE
+    (not just no double-grant). Satisfies the neutral FacilitatorClient Protocol."""
+
+    def __init__(self) -> None:
+        self._inner = FakeFacilitator()
+        self.settle_calls = 0
+
+    def verify(self, payment, requirements) -> bool:
+        return self._inner.verify(payment, requirements)
+
+    def settle(self, payment) -> Settlement:
+        self.settle_calls += 1
+        return self._inner.settle(payment)
+
+
+def test_active_replay_short_circuits_before_settle():
+    # Audit fix: a replay against an ALREADY-ACTIVE subscription must short-circuit BEFORE
+    # facilitator.settle — otherwise a live facilitator gets a duplicate settle call before
+    # Gecko can dedupe. No double-settle, no double-grant, no expiry extension.
+    ents = Entitlements()
+    reqs = build_payment_requirements(_PLAN, _POLICY)
+    payment = _payment_for(reqs)
+    fac = _CountingFacilitator()
+    assert isinstance(fac, FacilitatorClient)
+
+    def _go(now):
+        return settle_subscription(
+            customer_id="cust_1",
+            surface_id="pegana",
+            returned_terms=reqs,
+            payment=payment,
+            policy=_POLICY,
+            facilitator=fac,
+            entitlements=ents,
+            period_seconds=_PERIOD,
+            now=now,
+        )
+
+    first = _go(_NOW)
+    second = _go(_NOW + 10_000)  # still active -> must not re-settle
+    assert second is first
+    assert second.expires_at == _NOW + _PERIOD  # not extended
+    assert fac.settle_calls == 1  # settle NEVER re-invoked on the (live) facilitator
+
+
+def test_colliding_payment_ref_across_customers_is_scoped():
+    # Audit fix: dedupe is scoped to (customer, surface). Two customers paying the SAME
+    # terms/nonce yield the SAME opaque ref (FakeFacilitator); each must still get their OWN
+    # grant — never the other tenant's entitlement (no cross-tenant leak, invariant #1).
+    ents = Entitlements()
+    reqs = build_payment_requirements(_PLAN, _POLICY)
+    payment = _payment_for(reqs)  # identical payment -> identical ref across customers
+
+    def _go(customer_id):
+        return settle_subscription(
+            customer_id=customer_id,
+            surface_id="pegana",
+            returned_terms=reqs,
+            payment=payment,
+            policy=_POLICY,
+            facilitator=FakeFacilitator(),
+            entitlements=ents,
+            period_seconds=_PERIOD,
+            now=_NOW,
+        )
+
+    e1 = _go("cust_1")
+    e2 = _go("cust_2")
+    assert e1.customer_id == "cust_1"
+    assert e2.customer_id == "cust_2"  # NOT cust_1's entitlement
+    assert ents.get("cust_2", "pegana") is e2  # a real grant, not a misleading return
+    assert e1.payment_ref == e2.payment_ref  # same opaque ref, different tenants
+
+
 # --- stub mode -> auto-grant via FakeFacilitator; live needs injection ----------------
 def test_stub_is_default_and_auto_grants(monkeypatch):
     monkeypatch.delenv("X402_MODE", raising=False)

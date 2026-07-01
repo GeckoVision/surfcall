@@ -102,14 +102,21 @@ class Entitlements:
             (_norm_customer_id(customer_id), safe_surface_id(surface_id))
         )
 
-    def find_by_payment_ref(self, payment_ref: str) -> Entitlement | None:
-        """Look up an existing grant by its opaque settlement ref — the dedupe anchor that
-        makes a replayed settlement idempotent (no double-grant)."""
+    def find_by_payment_ref(
+        self, customer_id: str, surface_id: str, payment_ref: str
+    ) -> Entitlement | None:
+        """Return THIS (customer, surface)'s grant iff it already carries this opaque
+        settlement ref — the dedupe anchor that makes a replayed settlement idempotent
+        (no double-grant).
+
+        SCOPED to the requesting pair (O(1), never a global scan): a colliding ref from a
+        DIFFERENT tenant can never return the wrong customer's entitlement (no cross-tenant
+        leak, invariant #1)."""
         if not payment_ref:
             return None
-        for ent in self._by.values():
-            if ent.payment_ref == payment_ref:
-                return ent
+        ent = self.get(customer_id, surface_id)
+        if ent is not None and ent.payment_ref == payment_ref:
+            return ent
         return None
 
     def surfaces_for(self, customer_id: str) -> list[str]:

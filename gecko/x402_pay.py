@@ -202,23 +202,37 @@ def settle_subscription(
     Order matters. (1) ``validate_challenge`` against the pinned ``policy`` FIRST — the
     payment-swap defense; a wrong pay_to/asset/amount raises ``ChallengeError`` with NO
     settlement and NO grant. (2) ``facilitator.verify`` the payment matches the served terms.
-    (3) ``facilitator.settle`` (Gecko never signs/broadcasts). (4) Idempotency: a replayed
-    settlement (same opaque ref) returns the existing grant — no double-grant, no extension.
-    (5) Grant a control-plane record only: ``{entitlement, expires_at, opaque payment_ref}``.
+    (3) Pre-settle idempotency: an already-ACTIVE subscription short-circuits BEFORE settle,
+    so a replayed payment never re-invokes ``settle`` on a live facilitator (no
+    double-SETTLE, not just no double-grant). (4) ``facilitator.settle`` (Gecko never
+    signs/broadcasts). (5) Post-settle idempotency: a replayed settlement (same opaque ref,
+    same tenant) returns the existing grant — no double-grant, no extension. (6) Grant a
+    control-plane record only: ``{entitlement, expires_at, opaque payment_ref}``.
     """
     # 1. Trust anchor first — never settle terms our policy rejects.
     validate_challenge(returned_terms, policy)
     # 2. Confirm the payment authorizes exactly the served terms (no funds move on verify).
     if not facilitator.verify(payment, returned_terms):
         raise ChallengeError("payment does not authorize the served requirements")
-    # 3. Settle via the injected facilitator; we receive only an opaque reference.
+    # 3. Pre-settle short-circuit: an already-active sub must not re-settle. This keeps the
+    #    common replay off the facilitator entirely. NOTE: for the post-expiry replay edge, an
+    #    injected LIVE facilitator MUST still guarantee idempotent settle on a replayed
+    #    payment/nonce — the FakeFacilitator's settle is deterministic and moves no funds.
+    active = entitlements.get(customer_id, surface_id)
+    if active is not None and is_entitled(
+        entitlements, customer_id, surface_id, now=now
+    ):
+        return active
+    # 4. Settle via the injected facilitator; we receive only an opaque reference.
     settlement = facilitator.settle(payment)
     ref = settlement.reference
-    # 4. Idempotency: dedupe on the opaque settlement ref — a replay must not double-grant.
-    existing = entitlements.find_by_payment_ref(ref)
+    # 5. Idempotency: dedupe on the opaque settlement ref, SCOPED to this (customer, surface)
+    #    — a replay must not double-grant, and a colliding ref from another tenant can never
+    #    return the wrong entitlement.
+    existing = entitlements.find_by_payment_ref(customer_id, surface_id, ref)
     if existing is not None:
         return existing
-    # 5. Control-plane grant only — no payload, no key, no amount-as-funds is stored.
+    # 6. Control-plane grant only — no payload, no key, no amount-as-funds is stored.
     return entitlements.grant(
         customer_id,
         surface_id,
