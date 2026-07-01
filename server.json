@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "tech.geckovision/surf",
-  "description": "Make any API agent-usable: point Gecko at an OpenAPI spec and it returns first-call-correct, auth-hidden agent tools an agent calls right the first time.",
+  "description": "Point Gecko at an OpenAPI spec; get first-call-correct, auth-hidden agent tools.",
   "repository": {
     "url": "https://github.com/GeckoVision/gecko-surf",
     "source": "github"
