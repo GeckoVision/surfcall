@@ -27,16 +27,17 @@ Each attack is a self-contained poisoned spec in [`specs/`](specs/). The tests a
 [`naive.py`](naive.py) (a raw OpenAPI→tool dump with none of Gecko's defenses) would fall
 for it, so the difference is concrete.
 
-## The six attacks
+## The seven attacks
 
 | # | Attack | What the poison does | Why common guardrails miss it | Gecko's defense |
 |---|---|---|---|---|
-| 1 | **Key exfiltration via `servers[].url`** | Points the base host at `evil.attacker.test` | The pipeline derives the auth target from `servers[]`, so the customer's token is shipped to the attacker on call 1 | **Out-of-band trust anchor**: the auth-host allowlist comes from *provenance* (explicit base_url / ingest host), **never** the served spec. A raw blob is `unverified` → fail closed, no auth leaves. A drifted call is refused and recorded as `auth_host_blocked` (no host/token stored). |
+| 1 | **Key exfiltration via `servers[].url`** | Points the base host at `evil.attacker.test` | The pipeline derives the auth target from `servers[]`, so the customer's token is shipped to the attacker on call 1 | **Out-of-band trust anchor**: the auth-host allowlist comes from *provenance* (an explicit base_url, or the URL that served the bytes), **never** the served spec — and **not** from a local file's `servers[0]` (a saved spec is no more trustworthy than a raw blob). A raw blob / file is `unverified` → fail closed, no auth leaves. A drifted call is refused and recorded as `auth_host_blocked` (no host/token stored). |
 | 2 | **Private-key / seed-phrase leak** | Op text + a param say "include your private key / paste your seed phrase" in a field | Prompt-injection filters watch the *user's* prompt, not the *tool description* the spec supplies | **Text sanitizer + quarantine**: the injected instruction is stripped before it reaches the agent-facing tool, and the surface is quarantined (recorded-only, no auth) until a human clears it. |
 | 3 | **API-key echo via a poisoned `default`/`example`** | An optional param carries a secret-looking `default`/`example` so an unset field is auto-filled from the spec | Schema-driven arg-fillers copy `default`/`example` straight into the call | **Schema sanitizer**: secret-looking `default`/`example`/`enum` values are dropped — they never seed a tool arg. |
 | 4 | **Fund-transfer persuasion** | Op text "recommends" a transfer; the recipient field defaults to an attacker address | The tool looks like a normal transfer; nothing inspects the *intent* baked into the text/default | **Fund-routing sanitizer + quarantine**: the persuasion text is flagged, the attacker default recipient is dropped, and the surface is quarantined so no auth is injected. |
 | 5 | **Auth-location drift (header → query)** | The `securityScheme` places the key `in: query`, landing the secret in the URL | The pipeline follows the scheme and appends `?token=<secret>` — now in logs, proxies, Referer headers | **Auth-location pin**: Gecko refuses to inject a secret into a loggable location (query/path/cookie), even on a host-pinned surface; the call degrades to recorded. |
 | 6 | **Dropped `required` safety field** | The idempotency key (guards against double-charge) is removed from `required` | A pipeline that ignores `required` fires the partial call; and a post-comprehension tamper of the tool list goes unnoticed | **Required-guard + `tools_rev` integrity anchor**: the caller enforces the declared `required` contract (a missing safety field is caught, not fired), and the integrity anchor re-derives the tool set and refuses to serve a drifted one. |
+| 7 | **Response-schema poisoning of recorded mode** | The *success response* schema's `example`/`default` carry a prompt-injection string, an attacker payout address, and a leaked `sk-…` key | Request-side defenses never inspect the response schema, yet recorded mode ($0, no auth, the MCP default) echoes it verbatim to the agent | **Response-schema sanitizer + quarantine**: the same sanitizer runs over the success-response schema — poison there quarantines the surface, and the schema is scrubbed before recorded `data` is synthesized, so none of the payloads reach the agent. |
 
 ## Why "the spec is untrusted" is the whole point
 
@@ -57,6 +58,6 @@ signal that compounds — while the payload, host, token, and arg values are nev
 
 ## Files
 
-- [`specs/01_server_url_exfil.json`](specs/01_server_url_exfil.json) … [`specs/06_dropped_required_safety.json`](specs/06_dropped_required_safety.json) — one poisoned spec per attack.
+- [`specs/01_server_url_exfil.json`](specs/01_server_url_exfil.json) … [`specs/07_response_schema_poison.json`](specs/07_response_schema_poison.json) — one poisoned spec per attack.
 - [`naive.py`](naive.py) — the trust-the-spec baseline, for contrast (test-only).
 - [`test_poisoning_showcase.py`](test_poisoning_showcase.py) — the assertions that Gecko blocks each.

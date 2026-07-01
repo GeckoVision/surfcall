@@ -35,7 +35,9 @@ def test_client_search_then_call_recorded():
 
 
 def test_prepare_injects_session_auth():
-    client = _client()
+    # Auth injects only toward an out-of-band-pinned anchor. A local file is NOT a
+    # pinning provenance (Fix #1) — the anchor must come from an explicit base_url.
+    client = AgentApiClient(str(FIXTURE), base_url="https://txline.txodds.com")
     req = client.prepare(_odds_tool_name(client), {"fixtureId": 1})
     assert req.headers["Authorization"].startswith("Bearer ")
     assert "X-Api-Token" in req.headers

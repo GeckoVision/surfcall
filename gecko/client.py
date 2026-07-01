@@ -24,6 +24,7 @@ from .caller import CallError, PreparedRequest, build_request, execute
 from .catalog import Catalog
 from .ingest import Operation, extract_operations, load_spec
 from .sample import example_from_schema
+from .sanitize import sanitize_schema
 from .surfaces import _host_of, anchor_for, spec_is_quarantined, surface_rev, tools_rev
 from .tools import auth_location_is_safe, build_tools, to_tool
 
@@ -82,7 +83,13 @@ class AgentApiClient:
         # PR / "save this spec"); its servers[0] is attacker-controlled, so it fails closed
         # exactly like a dict. Any from-docs / low-confidence / poisoned spec is quarantined.
         spec_url = spec if (isinstance(spec, str) and spec_is_url) else None
-        poisoned = any(t.get("x-poison-flag") for t in self.tools)
+        # Poison can enter through the REQUEST side (tool x-poison-flag, from the input
+        # schema/description) OR the RESPONSE side: recorded mode ($0, the default) echoes
+        # the success-response schema's example/default/enum straight to the agent, so a
+        # poisoned response schema is an agent-facing channel request-only defenses miss.
+        poisoned = any(t.get("x-poison-flag") for t in self.tools) or any(
+            sanitize_schema(self._success_schema(op))[1] for op in self.operations
+        )
         quarantined = spec_is_quarantined(self.spec) or poisoned
         if poisoned:
             logger.warning(
@@ -215,12 +222,16 @@ class AgentApiClient:
                 "mode": "live",
             }
         schema = self._success_schema(self._op_by_name[tool_name])
+        # Scrub the response schema before synthesizing agent-visible data: drop any
+        # secret-looking or instruction-shaped example/default/enum so a poisoned response
+        # schema can't surface a prompt-injection string / attacker address / leaked key.
+        clean, _ = sanitize_schema(schema)
         self._capture(tool_name, 200, None, args, None, effective)
         return {
             "status": 200,
             "request": req.url,
             "method": req.method,
-            "data": example_from_schema(schema),
+            "data": example_from_schema(clean),
             "mode": "recorded",
         }
 
