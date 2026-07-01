@@ -31,6 +31,11 @@ from typing import Any
 # descriptions are both a comprehension smell and a place to bury an injected payload.
 MAX_TEXT_LEN = 600
 
+# Cap on a JSON-Schema property key. Real field names are short (the committed TxODDS +
+# Pegana surfaces top out at ~27 chars); an absurdly long key is a place to smuggle text
+# at the agent as a field name, so drop it rather than surface it.
+MAX_KEY_LEN = 128
+
 _REDACTION = "[gecko: removed unreviewed instruction from spec text]"
 
 # --- instruction-shaped danger patterns (curated; case-insensitive) -----------------
@@ -101,6 +106,13 @@ def scan_text(text: str) -> list[str]:
     return [name for name, pat in _PATTERNS.items() if pat.search(text)]
 
 
+def key_is_dangerous(key: Any) -> bool:
+    """True if a JSON-Schema property key is itself an injected instruction or absurdly
+    long. A key is attacker-controlled and reaches the agent as a *field name* in recorded
+    mode, so an instruction-shaped or over-long key must be DROPPED, not just flagged."""
+    return isinstance(key, str) and (bool(scan_text(key)) or len(key) > MAX_KEY_LEN)
+
+
 def looks_like_secret_value(value: Any) -> bool:
     """True if a spec-provided ``default``/``example``/``enum`` value looks like a real
     secret or attacker-controlled address that must never flow into a tool arg."""
@@ -149,13 +161,26 @@ def sanitize_schema(schema: Any, _depth: int = 0) -> tuple[Any, bool]:
                 continue
             out[key] = value
         elif key == "enum" and isinstance(value, list):
-            kept = [v for v in value if not looks_like_secret_value(v)]
+            # Drop any enum value that is a secret OR an injected instruction — an
+            # instruction-shaped enum still reaches the agent as a *suggested value*.
+            kept = [
+                v
+                for v in value
+                if not looks_like_secret_value(v)
+                and not (isinstance(v, str) and scan_text(v))
+            ]
             if len(kept) != len(value):
                 poisoned = True
             out[key] = kept
         elif key in ("properties", "patternProperties") and isinstance(value, dict):
             new_props: dict[str, Any] = {}
             for pname, pschema in value.items():
+                # The property KEY is attacker-controlled too: drop a whole property whose
+                # name is an injected instruction or absurdly long (quarantine alone leaves
+                # the field name reaching the agent in recorded mode).
+                if key_is_dangerous(pname):
+                    poisoned = True
+                    continue
                 cleaned, flagged = sanitize_schema(pschema, _depth + 1)
                 new_props[pname] = cleaned
                 poisoned = poisoned or flagged
