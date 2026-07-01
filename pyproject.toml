@@ -11,6 +11,9 @@ dependencies = ["pyyaml>=6.0"]
 [project.scripts]
 gecko = "gecko.serve:_run"
 gecko-testgen = "gecko.testgen:_run"
+# Read-only local usage aggregate for a corpus JSONL (no network). Opt-out
+# telemetry's inspection face; phone-home stays opt-in/disabled in gecko.telemetry.
+gecko-telemetry = "gecko.telemetry:_run"
 
 [project.optional-dependencies]
 serve = [
