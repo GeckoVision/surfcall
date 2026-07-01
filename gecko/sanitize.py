@@ -113,20 +113,101 @@ _ADDRESS_VALUE_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
+# Cross-script homoglyphs → their Latin lookalike. NFKC does NOT fold these (a Cyrillic
+# "і" U+0456 and a Latin "i" are distinct codepoints), so without this a lookalike voids
+# the injection rules exactly like a zero-width char did. Covers the common Cyrillic/Greek
+# letters used to spell an English trigger ("іgnore all previous instructions").
+_CONFUSABLES: dict[int, str] = {
+    ord(src): dst
+    for src, dst in {
+        # Cyrillic lowercase
+        "а": "a",
+        "в": "b",
+        "е": "e",
+        "к": "k",
+        "м": "m",
+        "н": "h",
+        "о": "o",
+        "р": "p",
+        "с": "c",
+        "т": "t",
+        "у": "y",
+        "х": "x",
+        "і": "i",
+        "ј": "j",
+        "ѕ": "s",
+        "ԁ": "d",
+        "һ": "h",
+        "ӏ": "l",
+        "ԛ": "q",
+        "ԝ": "w",
+        "ё": "e",
+        # Cyrillic uppercase
+        "А": "A",
+        "В": "B",
+        "Е": "E",
+        "К": "K",
+        "М": "M",
+        "Н": "H",
+        "О": "O",
+        "Р": "P",
+        "С": "C",
+        "Т": "T",
+        "У": "Y",
+        "Х": "X",
+        "І": "I",
+        "Ј": "J",
+        "Ѕ": "S",
+        # Greek lowercase
+        "α": "a",
+        "β": "b",
+        "ε": "e",
+        "ι": "i",
+        "κ": "k",
+        "ν": "v",
+        "ο": "o",
+        "ρ": "p",
+        "τ": "t",
+        "υ": "u",
+        "χ": "x",
+        "γ": "y",
+        # Greek uppercase
+        "Α": "A",
+        "Β": "B",
+        "Ε": "E",
+        "Η": "H",
+        "Ι": "I",
+        "Κ": "K",
+        "Μ": "M",
+        "Ν": "N",
+        "Ο": "O",
+        "Ρ": "P",
+        "Τ": "T",
+        "Υ": "Y",
+        "Χ": "X",
+        "Ζ": "Z",
+    }.items()
+}
+
+
 def _fold(text: str) -> str:
-    """Canonicalize text before regex matching so invisible/compatibility variants can't
-    slip a trigger past the raw-byte rules.
+    """Canonicalize text before regex matching so invisible/compatibility/lookalike
+    variants can't slip a trigger past the raw-codepoint rules.
 
-    Strips Unicode format chars (category ``Cf`` — zero-width space/joiner, bidi marks):
-    a single ``U+200B`` inside a trigger word (e.g. "Ignore prev<U+200B>ious instructions")
-    otherwise voids every text defense at once. Then NFKC-folds compatibility forms
-    (fullwidth latin, ligatures) to their canonical ASCII.
+    Three passes, in order:
+    1. Strip Unicode format chars (category ``Cf`` — zero-width space/joiner, bidi marks):
+       a single ``U+200B`` inside a trigger word (e.g. "Ignore prev<U+200B>ious
+       instructions") otherwise voids every text defense at once.
+    2. NFKC-fold compatibility forms (fullwidth latin, ligatures) to canonical ASCII.
+    3. Fold common Cyrillic/Greek homoglyphs to their Latin lookalike (``_CONFUSABLES``),
+       so a pure-Cyrillic "іgnore all previous instructions" trips the injection scan.
 
-    NOTE: NFKC does NOT fold cross-script homoglyphs (e.g. a Cyrillic "і" for a Latin
-    "i"). Mixed-script/confusables detection is a separate follow-on, out of scope here.
+    Best-effort defense-in-depth for the human-readable-text class (see module docstring):
+    it raises the cost of homoglyph evasion but does not claim to fold every confusable.
     """
     stripped = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
-    return unicodedata.normalize("NFKC", stripped)
+    normalized = unicodedata.normalize("NFKC", stripped)
+    return normalized.translate(_CONFUSABLES)
 
 
 def scan_text(text: str) -> list[str]:
