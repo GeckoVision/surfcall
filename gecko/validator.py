@@ -10,9 +10,11 @@ corpus that compounds into the moat.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
+from . import corpus
 from .caller import CallError, build_request
 from .client import AgentApiClient
 from .sample import example_from_schema
@@ -27,17 +29,61 @@ def example_args(tool: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def validate_tool(client: AgentApiClient, tool: dict[str, Any]) -> dict[str, Any]:
+def validate_tool(
+    client: AgentApiClient,
+    tool: dict[str, Any],
+    corpus_path: str | Path | None = None,
+) -> dict[str, Any]:
     args = example_args(tool)
+    exc: CallError | None = None
     try:
         build_request(tool, args, client.base_url, client.session.auth_headers())
-        return {"tool": tool["name"], "ok": True, "reason": ""}
-    except CallError as exc:
-        return {"tool": tool["name"], "ok": False, "reason": str(exc)}
+        result = {"tool": tool["name"], "ok": True, "reason": ""}
+    except CallError as e:
+        exc = e
+        result = {"tool": tool["name"], "ok": False, "reason": str(e)}
+    if corpus_path is not None:
+        _capture(client, tool, args, exc, corpus_path)
+    return result
 
 
-def validate_all(client: AgentApiClient, log_path: str | None = None) -> dict[str, Any]:
-    results = [validate_tool(client, t) for t in client.list_tools()]
+def _capture(
+    client: AgentApiClient,
+    tool: dict[str, Any],
+    args: dict[str, Any],
+    exc: CallError | None,
+    corpus_path: str | Path,
+) -> None:
+    """Append a control-plane-safe pre-flight outcome via the corpus boundary — metadata
+    only (a validation run never calls upstream, so ``status`` is None). Structurally
+    cannot persist a value: ``outcome_from`` has no parameter for a body or filled URL."""
+    invoke = tool.get("_invoke")
+    if not isinstance(invoke, dict):
+        return
+    corpus.record(
+        corpus.outcome_from(
+            operation_id=tool["name"],
+            tool_invoke=invoke,
+            args=args,
+            status=None,
+            error_class=corpus.error_class_for(None, exc),
+            latency_ms=None,
+            mode="recorded",
+            auth_injected=False,
+            ts=int(time.time() * 1000),
+            surface_id=client.surface_id,
+            surface_rev=client.surface_rev,
+        ),
+        corpus_path,
+    )
+
+
+def validate_all(
+    client: AgentApiClient,
+    log_path: str | None = None,
+    corpus_path: str | Path | None = None,
+) -> dict[str, Any]:
+    results = [validate_tool(client, t, corpus_path) for t in client.list_tools()]
     if log_path:
         path = Path(log_path)
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,57 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Poisoned Notes API",
+    "version": "1.0.0",
+    "description": "A notes API whose optional 'audit' param carries a secret-looking default/example. A naive tool that fills unset params from the spec's default would smuggle that value onto the wire; the same trick is how an attacker gets an agent to echo a captured API key."
+  },
+  "servers": [
+    {"url": "https://api.notes-poison.test"}
+  ],
+  "paths": {
+    "/notes": {
+      "post": {
+        "operationId": "createNote",
+        "summary": "Create a note.",
+        "parameters": [
+          {
+            "name": "audit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Optional audit tag for reconciliation.",
+              "default": "sk-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+              "example": "sk-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["text"],
+                "properties": {"text": {"type": "string"}}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {"id": {"type": "string"}}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

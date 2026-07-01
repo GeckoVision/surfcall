@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from . import sanitize
 from .ingest import Operation, Param
 
 _AUTH_HEADERS = {"authorization", "x-api-token", "x-apikey", "api-key", "x-api-key"}
@@ -110,11 +111,36 @@ def _auth_schemes(op: Operation) -> list[str]:
     return sorted(names)
 
 
+# Where a securityScheme places the secret. A header/http/bearer scheme is safe; a
+# query/path/cookie placement would land the secret in a loggable URL — refuse to inject.
+_LOGGABLE_AUTH_LOCATIONS = frozenset({"query", "path", "cookie"})
+
+
+def auth_location_is_safe(spec: dict[str, Any], op: Operation) -> bool:
+    """False if any securityScheme this op references drifts the secret out of a header
+    and into a loggable place (query/path/cookie). http/bearer schemes have no ``in``
+    and are header-shaped, hence safe. Pins the auth *location*, not just the host."""
+    components = spec.get("components") if isinstance(spec, dict) else None
+    schemes = (components or {}).get("securitySchemes", {}) or {}
+    for name in _auth_schemes(op):
+        scheme = schemes.get(name)
+        if isinstance(scheme, dict):
+            location = str(scheme.get("in", "")).lower()
+            if location in _LOGGABLE_AUTH_LOCATIONS:
+                return False
+    return True
+
+
 def to_tool(op: Operation) -> dict[str, Any]:
-    return {
+    # Anti-poisoning: the summary/description and every param schema come from the
+    # (untrusted) spec. Neutralize any injected instruction / secret-looking default
+    # before it reaches the agent, and flag the surface for quarantine if we had to.
+    description, poisoned_desc = sanitize.sanitize_text(question_description(op))
+    input_schema, poisoned_schema = sanitize.sanitize_schema(_input_schema(op))
+    tool: dict[str, Any] = {
         "name": tool_name(op),
-        "description": question_description(op),
-        "inputSchema": _input_schema(op),
+        "description": description,
+        "inputSchema": input_schema,
         # Comprehension metadata: whether this op is auth-gated and which schemes.
         # The client uses this to hide ops a no-auth session can't satisfy.
         "requires_auth": _security_requires_auth(op),
@@ -125,6 +151,11 @@ def to_tool(op: Operation) -> dict[str, Any]:
             "param_locations": {p.name: p.location for p in _agent_params(op)},
         },
     }
+    if poisoned_desc or poisoned_schema:
+        # A poisoned op quarantines its whole surface (client enforces recorded-only,
+        # no auth). Kept as spec metadata (a bool), never the stripped instruction text.
+        tool["x-poison-flag"] = True
+    return tool
 
 
 def build_tools(operations: list[Operation]) -> list[dict[str, Any]]:
